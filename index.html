@@ -2527,43 +2527,48 @@ function renderActionsTab() {
     return;
   }
 
-  // Block all player actions until game start date
+  // Block gameplay actions until game start date, but still allow sign-up and province selection
   if (isBeforeGameStart() && !isAdminUser()) {
-    var secs = secsUntilGameStart();
-    var d = Math.floor(secs / 86400);
-    var h = Math.floor((secs % 86400) / 3600);
-    var m = Math.floor((secs % 3600) / 60);
-    var s = secs % 60;
-    var pad = function(n){ return n < 10 ? '0'+n : ''+n; };
-    var countdownStr = (d > 0 ? d + 'd ' : '') + pad(h) + 'h ' + pad(m) + 'm ' + pad(s) + 's';
-    var dateStr = new Date(_gameStartDate + 'T00:00:00').toLocaleDateString([], {weekday:'long',year:'numeric',month:'long',day:'numeric'});
-    contentEl.innerHTML =
-      '<div style="margin-top:24px;padding:32px;background:var(--color-background-secondary);border:1px solid rgba(99,102,241,0.3);border-radius:var(--border-radius-lg);text-align:center;max-width:480px;margin-left:auto;margin-right:auto;">' +
-        '<div style="font-size:36px;margin-bottom:12px;">⚔️</div>' +
-        '<div style="font-size:16px;font-weight:700;color:#6366f1;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Game Starts In</div>' +
-        '<div id="actionsStartCountdown" style="font-size:32px;font-weight:900;color:var(--color-text-primary);letter-spacing:2px;font-family:\'IBM Plex Mono\',monospace;margin:12px 0;">' + countdownStr + '</div>' +
-        '<div style="font-size:13px;color:var(--color-text-secondary);">' + dateStr + '</div>' +
-        '<div style="font-size:12px;color:var(--color-text-tertiary);margin-top:12px;">All actions are locked until the game begins.</div>' +
-      '</div>';
-    // Tick the countdown in the actions tab
-    if (window._actionsStartCountdownInterval) clearInterval(window._actionsStartCountdownInterval);
-    window._actionsStartCountdownInterval = setInterval(function() {
-      var el = document.getElementById('actionsStartCountdown');
-      if (!el) { clearInterval(window._actionsStartCountdownInterval); return; }
-      if (!isBeforeGameStart()) {
-        clearInterval(window._actionsStartCountdownInterval);
-        renderActionsTab();
-        return;
-      }
-      var secs2 = secsUntilGameStart();
-      var d2 = Math.floor(secs2 / 86400);
-      var h2 = Math.floor((secs2 % 86400) / 3600);
-      var m2 = Math.floor((secs2 % 3600) / 60);
-      var s2 = secs2 % 60;
-      var pad2 = function(n){ return n < 10 ? '0'+n : ''+n; };
-      el.textContent = (d2 > 0 ? d2 + 'd ' : '') + pad2(h2) + 'h ' + pad2(m2) + 'm ' + pad2(s2) + 's';
-    }, 1000);
-    return;
+    // If player is not yet assigned, fall through to show signup/province selection UI
+    if (assigned && assignedIdx >= 0) {
+      // Already registered — show countdown only (no gameplay yet)
+      var secs = secsUntilGameStart();
+      var d = Math.floor(secs / 86400);
+      var h = Math.floor((secs % 86400) / 3600);
+      var m = Math.floor((secs % 3600) / 60);
+      var s = secs % 60;
+      var pad = function(n){ return n < 10 ? '0'+n : ''+n; };
+      var countdownStr = (d > 0 ? d + 'd ' : '') + pad(h) + 'h ' + pad(m) + 'm ' + pad(s) + 's';
+      var dateStr = new Date(_gameStartDate + 'T00:00:00').toLocaleDateString([], {weekday:'long',year:'numeric',month:'long',day:'numeric'});
+      contentEl.innerHTML =
+        '<div style="margin-top:24px;padding:32px;background:var(--color-background-secondary);border:1px solid rgba(99,102,241,0.3);border-radius:var(--border-radius-lg);text-align:center;max-width:480px;margin-left:auto;margin-right:auto;">' +
+          '<div style="font-size:36px;margin-bottom:12px;">⚔️</div>' +
+          '<div style="font-size:16px;font-weight:700;color:#6366f1;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Game Starts In</div>' +
+          '<div id="actionsStartCountdown" style="font-size:32px;font-weight:900;color:var(--color-text-primary);letter-spacing:2px;font-family:\'IBM Plex Mono\',monospace;margin:12px 0;">' + countdownStr + '</div>' +
+          '<div style="font-size:13px;color:var(--color-text-secondary);">' + dateStr + '</div>' +
+          '<div style="font-size:12px;color:var(--color-text-tertiary);margin-top:12px;">You\'re registered as <strong style="color:var(--color-accent);">' + esc(assigned) + '</strong>. Actions unlock when the game begins.</div>' +
+        '</div>';
+      // Tick the countdown in the actions tab
+      if (window._actionsStartCountdownInterval) clearInterval(window._actionsStartCountdownInterval);
+      window._actionsStartCountdownInterval = setInterval(function() {
+        var el = document.getElementById('actionsStartCountdown');
+        if (!el) { clearInterval(window._actionsStartCountdownInterval); return; }
+        if (!isBeforeGameStart()) {
+          clearInterval(window._actionsStartCountdownInterval);
+          renderActionsTab();
+          return;
+        }
+        var secs2 = secsUntilGameStart();
+        var d2 = Math.floor(secs2 / 86400);
+        var h2 = Math.floor((secs2 % 86400) / 3600);
+        var m2 = Math.floor((secs2 % 3600) / 60);
+        var s2 = secs2 % 60;
+        var pad2 = function(n){ return n < 10 ? '0'+n : ''+n; };
+        el.textContent = (d2 > 0 ? d2 + 'd ' : '') + pad2(h2) + 'h ' + pad2(m2) + 'm ' + pad2(s2) + 's';
+      }, 1000);
+      return;
+    }
+    // Not yet registered — fall through so signup UI renders below
   }
 
   if (!assigned || assignedIdx < 0) {
@@ -3844,20 +3849,15 @@ async function applyBattleRewardAction() {
     var winnerIds = state.winnerIds || [];
     var loserIds  = state.loserIds  || [];
 
-    // ── Apply mil/happiness to all sides ──
+    // ── Apply mil/happiness to all sides — everyone loses 10% military; no gain for winners ──
+    var allBattleIds = winnerIds.concat(loserIds);
+    allBattleIds.forEach(function(pi) {
+      var n = workingNations[pi];
+      n.military = String(Math.round(Math.max(0, (parseFloat(n.military)||0) * 0.9) * 100) / 100);
+    });
     if (state.result !== 'draw') {
-      var milGain = Math.max(0.5, Math.round(pctAbs * 0.1 * 10) / 10);
-      var milLoss = Math.max(1.0, Math.round(pctAbs * 0.15 * 10) / 10);
-      winnerIds.forEach(function(pi) {
-        var n = workingNations[pi];
-        n.military = String(Math.round(((parseFloat(n.military)||0) + milGain) * 100) / 100);
-        var curH = parseFloat(n.happiness)||0, isD = curH <= 1;
-        n.happiness = isD ? String(Math.min(1, Math.round((curH+0.02)*10000)/10000))
-                          : String(Math.min(100, Math.round((curH+2)*100)/100));
-      });
       loserIds.forEach(function(pi) {
         var n = workingNations[pi];
-        n.military = String(Math.round(Math.max(0,(parseFloat(n.military)||0)-milLoss)*100)/100);
         var curH = parseFloat(n.happiness)||0, isD = curH <= 1;
         n.happiness = isD ? String(Math.max(0, Math.round((curH-0.05)*10000)/10000))
                           : String(Math.max(0, Math.round((curH-5)*100)/100));
@@ -3931,18 +3931,7 @@ async function applyBattleRewardAction() {
       defender.exports = defExports.map(function(e){return e.name+' - '+e.value+'% '+e.stat;}).join(', ');
     }
 
-    // ── Apply eco seizure ──
-    var seizeEcoCb = document.getElementById('playerSeizeEco');
-    if (seizeEcoCb && seizeEcoCb.checked && defLoserIdx >= 0) {
-      var ecoAmt = Math.min(parseFloat(document.getElementById('playerSeizeEcoAmt').value)||0, 10);
-      if (ecoAmt > 0) {
-        var def2 = workingNations[defLoserIdx];
-        var available = Math.min(ecoAmt, parseFloat(def2.econ)||0);
-        def2.econ = String(Math.round(Math.max(0,(parseFloat(def2.econ)||0)-available)*100)/100);
-        assignedPlayer.econ = String(Math.round(((parseFloat(assignedPlayer.econ)||0)+available)*100)/100);
-        addToLog('Eco seized: ' + available.toFixed(1) + ' eco from ' + getWN(defLoserIdx) + ' → ' + getWN(idx));
-      }
-    }
+    // Eco seizure removed — winners no longer gain eco from enemies
 
     addToLog('Battle consequences applied: ' + state.warName + ' — ' + state.result + '.');
     refreshAutoDropdowns();
@@ -7620,9 +7609,8 @@ function calculateBattleConsequences() {
     var n = workingNations[p.idx];
     var mil = parseFloat(n.military) || 0;
     var def = parseFloat(n.defence) || 0;
-    var isWinner = isDraw ? false : (atkWin ? p.side==='atk' : p.side==='def');
-    var newMil = isDraw ? mil * 0.75 : (isWinner ? mil * 0.9 : mil * 0.75);
-    var milChange = isDraw ? '−25%' : (isWinner ? '−10%' : '−25%');
+    var newMil = mil * 0.9;
+    var milChange = '−10%';
     var newDef = def;
     var defChange = '';
     if (p.idx === updTargetIdx) { newDef = def * 0.75; defChange = '−25%'; }
@@ -7730,13 +7718,12 @@ function applyBattleUpdate() {
     }
   }
 
-  // ── Military & Defence ──
+  // ── Military & Defence — all sides lose 10% military; target (defender) loses 25% defence ──
   var allInvolved = updAtk.map(function(a){return {idx:a.idx,side:'atk'};}).concat(updDef.map(function(d){return {idx:d.idx,side:'def'};}));
   allInvolved.forEach(function(p) {
     var n = workingNations[p.idx];
     var mil = parseFloat(n.military) || 0;
-    var isWinner = st.isDraw ? false : (st.atkWin ? p.side==='atk' : p.side==='def');
-    n.military = String((st.isDraw ? mil*0.75 : (isWinner ? mil*0.9 : mil*0.75)).toFixed(2));
+    n.military = String((mil * 0.9).toFixed(2));
     if (p.idx === updTargetIdx) {
       var def = parseFloat(n.defence) || 0;
       n.defence = String((def * 0.75).toFixed(2));
@@ -12989,32 +12976,18 @@ function loadGameStartDate(cb) {
 }
 
 function applyGameStartGate() {
-  var locked = isBeforeGameStart();
+  // The game-start gate now only affects the Actions tab (not a full-page overlay).
+  // renderActionsTab() handles showing the countdown or signup UI as appropriate.
+  // We still trigger a re-render of the actions tab if it's open.
+  if (typeof renderActionsTab === 'function') {
+    var actionsTab = document.getElementById('tab-actions');
+    if (actionsTab && actionsTab.style.display !== 'none') {
+      renderActionsTab();
+    }
+  }
+  // Ensure full-page overlay is always hidden (start date no longer locks whole page)
   var overlay = document.getElementById('gameStartOverlay');
-  if (!overlay) return;
-  if (locked) {
-    var secs = secsUntilGameStart();
-    var d = Math.floor(secs / 86400);
-    var h = Math.floor((secs % 86400) / 3600);
-    var m = Math.floor((secs % 3600) / 60);
-    var s = secs % 60;
-    var pad = function(n){ return n < 10 ? '0'+n : ''+n; };
-    var countdownStr = (d > 0 ? d + 'd ' : '') + pad(h) + 'h ' + pad(m) + 'm ' + pad(s) + 's';
-    var dateStr = new Date(_gameStartDate + 'T00:00:00').toLocaleDateString([], {weekday:'long',year:'numeric',month:'long',day:'numeric'});
-    overlay.style.display = 'block';
-    overlay.innerHTML =
-      '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:0;background:var(--color-background-primary);font-family:\'IBM Plex Mono\',monospace;position:relative;overflow:hidden;">' +
-        '<div style="position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.02) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;"></div>' +
-        '<div style="position:absolute;font-size:clamp(60px,12vw,120px);font-weight:900;letter-spacing:-2px;color:rgba(255,255,255,0.025);white-space:nowrap;pointer-events:none;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-8deg);">PREPARING</div>' +
-        '<div style="position:relative;z-index:1;background:var(--color-background-secondary);border:1px solid var(--color-border-primary);border-top:3px solid #6366f1;border-radius:var(--border-radius-lg);padding:36px 48px;text-align:center;max-width:460px;width:90%;box-shadow:0 24px 64px rgba(0,0,0,0.5);">' +
-          '<div style="font-size:40px;margin-bottom:16px;">⚔️</div>' +
-          '<div style="font-size:20px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:#6366f1;margin-bottom:6px;">Game Starts In</div>' +
-          '<div id="gameStartCountdownDisplay" style="font-size:clamp(26px,6vw,42px);font-weight:900;color:var(--color-text-primary);letter-spacing:2px;margin:12px 0;">' + countdownStr + '</div>' +
-          '<div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:4px;">' + dateStr + '</div>' +
-          '<div style="font-size:11px;color:var(--color-text-tertiary);margin-top:16px;">All actions are locked until the game begins.</div>' +
-        '</div>' +
-      '</div>';
-  } else {
+  if (overlay) {
     overlay.style.display = 'none';
     overlay.innerHTML = '';
   }
@@ -13059,6 +13032,14 @@ function getSydneyTime() {
 }
 
 function isInLockoutPeriod() {
+  // Never lock on weekends (Saturday=6, Sunday=0 in Sydney local time)
+  var now = new Date();
+  var sydneyDateStr = now.toLocaleString('en-AU', { timeZone: SYDNEY_TZ, weekday: 'short' });
+  var sydneyDay = new Intl.DateTimeFormat('en-AU', { timeZone: SYDNEY_TZ, weekday: 'short' }).format(now);
+  if (sydneyDay === 'Sat' || sydneyDay === 'Sun') {
+    console.log('[LOCKOUT] Weekend in Sydney — lockout skipped.');
+    return false;
+  }
   var t = getSydneyTime();
   var nowMins  = t.h * 60 + t.m;
   var startMins = LOCKOUT_START_H * 60 + LOCKOUT_START_M;
