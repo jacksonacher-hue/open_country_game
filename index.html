@@ -474,14 +474,63 @@ function initFirebaseAuth() {
     closeBtn.addEventListener('click', closeAdminLoginModal);
   }
 
+  let userAssignmentsUnsubscribe = null;
+
   auth.onAuthStateChanged((user) => {
     authReady = true;
-    setAdminAuthUI(user);
+
     if (user) {
+      // Attach the userAssignments listener now that we're authenticated.
+      // setAdminAuthUI is called INSIDE the listener once data arrives, so the
+      // UI always sees the correct assignment rather than an empty object.
+      if (!userAssignmentsUnsubscribe) {
+        const assignRef = window.firebaseRef(window.firebaseDb, 'userAssignments');
+        assignRef.on('value', function(snap) {
+          var raw = snap.val() || {};
+          var decoded = {};
+          Object.keys(raw).forEach(function(k) {
+            var emailGuess = k.indexOf('|dot|') !== -1
+              ? k.replace(/\|dot\|/g, '.')
+              : k.replace(/_/g, '.');
+            decoded[emailGuess] = raw[k];
+          });
+          userAssignments = decoded;
+          console.log('[LOAD] userAssignments set to:', JSON.stringify(userAssignments));
+          // Now that assignments are loaded, update the UI properly
+          if (typeof setAdminAuthUI === 'function' && window.firebaseAuth && window.firebaseAuth.currentUser) {
+            setAdminAuthUI(window.firebaseAuth.currentUser);
+          }
+          renderAssignmentList();
+          if (typeof renderActionsTab === 'function') renderActionsTab();
+          if (typeof populateChatDmDropdown === 'function') populateChatDmDropdown();
+          if (typeof renderChatSidebar === 'function') renderChatSidebar();
+          if (typeof updateEspionageTabVisibility === 'function') updateEspionageTabVisibility();
+          if (typeof subscribeAllianceGcs === 'function') subscribeAllianceGcs();
+        }, function(error) {
+          console.error('[LOAD] onValue error:', error.code, error.message);
+          // Even if assignments fail to load, still show the logged-in UI
+          setAdminAuthUI(user);
+        });
+        userAssignmentsUnsubscribe = () => assignRef.off('value');
+      }
+      // Load player requests now that we're authenticated
+      if (typeof loadPlayerRequestsFromFirebase === 'function') {
+        loadPlayerRequestsFromFirebase().catch(function(e) {
+          console.warn('[AUTH] loadPlayerRequestsFromFirebase failed', e);
+        });
+      }
       // Subscribe to battle results for badge updates
       try { subscribeBattleResults(); } catch(e) {}
-    }
-    if (!user) {
+      // Show logged-in UI immediately (assignment label updates when listener fires)
+      setAdminAuthUI(user);
+    } else {
+      // User signed out — detach listener and clear assignments
+      if (userAssignmentsUnsubscribe) {
+        userAssignmentsUnsubscribe();
+        userAssignmentsUnsubscribe = null;
+      }
+      userAssignments = {};
+      setAdminAuthUI(user);
       const activeTab = document.querySelector('.tab-btn.active');
       if (activeTab && (activeTab.dataset.tab === 'data' || activeTab.dataset.tab === 'autoupdate')) {
         openAdminLoginModal();
@@ -2166,7 +2215,7 @@ document.addEventListener('DOMContentLoaded', _enforceAdminTabVisibility);
 // ─────────────────────────────────────────────────────────────────────────────
 
 let popup_shown = false; // Track if login popup has been shown
-let userAssignments = loadUserAssignments();
+let userAssignments = {}; // populated after auth is confirmed
 
 function loadUserAssignments() {
   // Compat SDK is synchronous — no setTimeout needed, globals are ready immediately
@@ -2924,11 +2973,21 @@ async function selfRegisterPlayer() {
   syncWorkingDataToSheets();
   refreshAutoDropdowns();
 
-  // Assign the logged-in user to the new player
+  // Assign the logged-in user to the new player (writes userAssignments to Firebase)
   setAssignedPlayer(user.email, fullName);
 
   addToLog('Self-registered: ' + fullName + ' — provinces: ' + selected.join(', ') + (addedExports.length ? ' (exports: ' + addedExports.join(', ') + ')' : ''));
-  showToast('Nation created! Welcome, ' + fullName + '!', 'success');
+
+  // Upload the updated workbook (player record + province ownership) to Firebase
+  try {
+    showToast('Saving nation to Firebase…', 'info');
+    await uploadWorkbookToFirebase();
+    showToast('Nation created! Welcome, ' + fullName + '!', 'success');
+  } catch(uploadErr) {
+    console.error('[SELFREG] uploadWorkbookToFirebase failed', uploadErr);
+    showToast('Nation created locally but failed to save to Firebase. Please reload and try again.', 'error');
+  }
+
   renderActionsTab();
 }
 window.selfRegisterPlayer = selfRegisterPlayer;
@@ -4019,6 +4078,10 @@ async function savePlayerRequestsToFirebase() {
 
 // Subscribe to live updates when actions tab is active
 function subscribePlayerRequests() {
+  if (!window.firebaseAuth || !window.firebaseAuth.currentUser) {
+    console.warn('[REQUESTS] subscribePlayerRequests skipped — not authenticated');
+    return;
+  }
   try {
     var db = window.firebaseDb;
     var reqRef = window.firebaseRef(db, 'playerRequests');
@@ -4766,7 +4829,7 @@ window.addEventListener('load', async () => {
     window.initFirebaseAuth();
   }
   loadFromFirebase();
-  await loadPlayerRequestsFromFirebase();
+  // loadPlayerRequestsFromFirebase() is called after auth confirms (inside onAuthStateChanged)
 });
 
 function parseNationSheet(sheetName) {
