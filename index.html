@@ -402,6 +402,8 @@ function setAdminAuthUI(user) {
     }, 2500);
     // Load alliance GCs the player is already in
     setTimeout(function() { if (typeof subscribeAllianceGcs === 'function') subscribeAllianceGcs(); }, 1500);
+    // Load game start date
+    if (typeof loadGameStartDate === 'function') loadGameStartDate();
     // Check if automatic daily update needs to run
     setTimeout(function() {
       if (typeof checkAndRunAutomaticUpdates === 'function') checkAndRunAutomaticUpdates();
@@ -1727,6 +1729,33 @@ window.populateWorkbookFromFirebaseData = populateWorkbookFromFirebaseData;
       <button onclick="resetWorkingCopy()" style="margin-left:auto;padding:6px 14px;font-family:inherit;font-size:12px;font-weight:500;background:var(--color-background-danger);color:var(--color-text-danger);border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);cursor:pointer;">Reset All Changes</button>
       <button onclick="toggleWorkingPanel()" id="toggleDataPanelBtn" style="padding:6px 14px;font-family:inherit;font-size:12px;font-weight:500;background:var(--color-background-secondary);border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);cursor:pointer;">Hide Data ◂</button>
     </div>
+
+    <!-- ── GAME START DATE ── -->
+    <div class="auto-step" style="margin-bottom:16px;">
+      <div class="auto-step-header" onclick="toggleAutoPanel('panelGameStart')">🗓 Game Start Date <span id="panelGameStartArrow">▸</span></div>
+      <div id="panelGameStart" class="auto-panel" style="display:none;">
+        <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:14px;line-height:1.7;">
+          Set the date when the game officially begins. Until that date:
+          <ul style="margin:6px 0 0 18px;padding:0;">
+            <li>Daily and weekly automatic updates will be <strong style="color:var(--color-text-warning);">skipped</strong></li>
+            <li>The Actions tab will show a <strong style="color:var(--color-text-warning);">countdown timer</strong> and be locked for all players</li>
+          </ul>
+          Leave blank to allow updates and actions immediately.
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
+          <div>
+            <label class="auto-label">Start Date &amp; Time</label>
+            <input type="datetime-local" id="gameStartDateInput"
+              style="padding:8px 10px;font-family:inherit;font-size:13px;border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">
+          </div>
+          <button onclick="saveGameStartDate()"
+            style="padding:8px 18px;font-family:inherit;font-size:13px;font-weight:600;color:#000;background:var(--color-accent);border:none;border-radius:var(--border-radius-md);cursor:pointer;">Save</button>
+          <button onclick="clearGameStartDate()"
+            style="padding:8px 14px;font-family:inherit;font-size:13px;font-weight:500;background:transparent;color:var(--color-text-tertiary);border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);cursor:pointer;">Clear</button>
+        </div>
+        <div id="gameStartStatus" style="margin-top:10px;font-size:12px;"></div>
+      </div>
+    </div>
     <div style="display:flex;gap:16px;">
     <!-- LEFT: Controls -->
     <div id="autoControlsPane" style="flex:1;min-width:0;overflow-y:auto;">
@@ -2573,6 +2602,24 @@ function renderActionsTab() {
     console.log('[ACTIONS] renderActionsTab: No user logged in');
     infoEl.innerHTML = '';
     contentEl.innerHTML = '<div style="color:var(--color-text-tertiary);padding:40px;text-align:center;font-size:14px;">🔒 Log in to access player actions.</div>';
+    return;
+  }
+
+  // ── Game start date lockout (non-admins see a countdown) ──
+  if (!isGameStarted() && !isAdminUser()) {
+    var remaining = _gameStartTs - Date.now();
+    infoEl.innerHTML = '';
+    contentEl.innerHTML =
+      '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 24px;gap:20px;text-align:center;">' +
+        '<div style="font-size:48px;">⏳</div>' +
+        '<div style="font-size:20px;font-weight:700;color:var(--color-accent);letter-spacing:1px;text-transform:uppercase;">Game Not Yet Started</div>' +
+        '<div style="font-size:13px;color:var(--color-text-secondary);max-width:400px;">The game begins on <strong style="color:var(--color-text-primary);">' +
+          new Date(_gameStartTs).toLocaleString() + '</strong>.<br>Actions will be unlocked automatically when the timer reaches zero.</div>' +
+        '<div style="margin-top:8px;font-family:\'IBM Plex Mono\',monospace;font-size:42px;font-weight:700;color:var(--color-text-primary);letter-spacing:4px;" id="actionsCountdownDisplay">' +
+          _formatCountdown(remaining) +
+        '</div>' +
+        '<div style="font-size:11px;color:var(--color-text-tertiary);">days · hours · minutes · seconds</div>' +
+      '</div>';
     return;
   }
 
@@ -73080,11 +73127,165 @@ window.filterHistoryLog = filterHistoryLog;
 // AUTOMATIC DAILY / WEEKLY UPDATE SYSTEM
 // ══════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════
+// GAME START DATE  — saved to Firebase at gameSettings/startDate
+// ═══════════════════════════════════════════════════════════════
+
+var _gameStartTs = null; // ms timestamp, null = no restriction
+var _gameStartCountdownInterval = null;
+
+async function loadGameStartDate() {
+  try {
+    var snap = await window.firebaseGet(window.firebaseRef(window.firebaseDb, 'gameSettings/startDate'));
+    _gameStartTs = snap.exists() ? (snap.val() || null) : null;
+    var inp = document.getElementById('gameStartDateInput');
+    if (inp && _gameStartTs) {
+      // Convert UTC timestamp → local datetime-local string
+      var d = new Date(_gameStartTs);
+      var pad = function(n) { return String(n).padStart(2,'0'); };
+      inp.value = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) +
+                  'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    } else if (inp) {
+      inp.value = '';
+    }
+    _updateGameStartStatus();
+    renderActionsTab();
+  } catch(e) { console.warn('[GAME START] loadGameStartDate failed', e); }
+}
+window.loadGameStartDate = loadGameStartDate;
+
+function _updateGameStartStatus() {
+  var el = document.getElementById('gameStartStatus');
+  if (!el) return;
+  if (!_gameStartTs) {
+    el.innerHTML = '<span style="color:var(--color-text-tertiary);">No start date set — updates and actions are unrestricted.</span>';
+  } else {
+    var now = Date.now();
+    var d = new Date(_gameStartTs);
+    if (now >= _gameStartTs) {
+      el.innerHTML = '<span style="color:var(--color-text-success);">✓ Game started on ' + d.toLocaleString() + ' — updates and actions are live.</span>';
+    } else {
+      var diff = _gameStartTs - now;
+      var days = Math.floor(diff / 86400000);
+      var hrs  = Math.floor((diff % 86400000) / 3600000);
+      var mins = Math.floor((diff % 3600000)  / 60000);
+      var secs = Math.floor((diff % 60000)    / 1000);
+      el.innerHTML = '<span style="color:var(--color-text-warning);">⏳ Game starts ' + d.toLocaleString() + ' — ' +
+        (days > 0 ? days + 'd ' : '') + hrs + 'h ' + mins + 'm ' + secs + 's remaining.</span>';
+    }
+  }
+}
+
+async function saveGameStartDate() {
+  var inp = document.getElementById('gameStartDateInput');
+  if (!inp || !inp.value) { showAdminToast('Pick a date first', 'error'); return; }
+  var ts = new Date(inp.value).getTime();
+  if (isNaN(ts)) { showAdminToast('Invalid date', 'error'); return; }
+  try {
+    await window.firebaseSet(window.firebaseRef(window.firebaseDb, 'gameSettings/startDate'), ts);
+    _gameStartTs = ts;
+    _updateGameStartStatus();
+    renderActionsTab();
+    showAdminToast('Game start date saved ✓', 'success');
+  } catch(e) { showAdminToast('Save failed: ' + e.message, 'error'); }
+}
+window.saveGameStartDate = saveGameStartDate;
+
+async function clearGameStartDate() {
+  try {
+    await window.firebaseSet(window.firebaseRef(window.firebaseDb, 'gameSettings/startDate'), null);
+    _gameStartTs = null;
+    var inp = document.getElementById('gameStartDateInput');
+    if (inp) inp.value = '';
+    _updateGameStartStatus();
+    renderActionsTab();
+    showAdminToast('Game start date cleared', 'success');
+  } catch(e) { showAdminToast('Clear failed: ' + e.message, 'error'); }
+}
+window.clearGameStartDate = clearGameStartDate;
+
+// Returns true if the game has started (or no start date is set)
+function isGameStarted() {
+  if (!_gameStartTs) return true;
+  return Date.now() >= _gameStartTs;
+}
+window.isGameStarted = isGameStarted;
+
+// Subscribe to gameSettings/startDate so all clients update in real time
+function subscribeGameStartDate() {
+  try {
+    var ref = window.firebaseRef(window.firebaseDb, 'gameSettings/startDate');
+    ref.on('value', function(snap) {
+      _gameStartTs = snap.exists() ? (snap.val() || null) : null;
+      var inp = document.getElementById('gameStartDateInput');
+      if (inp) {
+        if (_gameStartTs) {
+          var d = new Date(_gameStartTs);
+          var pad = function(n) { return String(n).padStart(2,'0'); };
+          inp.value = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) +
+                      'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        } else {
+          inp.value = '';
+        }
+      }
+      _updateGameStartStatus();
+      renderActionsTab();
+    });
+  } catch(e) { console.warn('[GAME START] subscribeGameStartDate failed', e); }
+}
+
+// Start a 1-second ticker that keeps the admin panel status + the actions lockout fresh
+function startGameStartCountdown() {
+  if (_gameStartCountdownInterval) clearInterval(_gameStartCountdownInterval);
+  _gameStartCountdownInterval = setInterval(function() {
+    _updateGameStartStatus();
+    // Update the actions tab countdown if it is currently showing
+    var cdEl = document.getElementById('actionsCountdownDisplay');
+    if (cdEl && _gameStartTs) {
+      if (Date.now() >= _gameStartTs) {
+        // Game just started — re-render the actions tab properly
+        clearInterval(_gameStartCountdownInterval);
+        _gameStartCountdownInterval = null;
+        renderActionsTab();
+      } else {
+        cdEl.textContent = _formatCountdown(_gameStartTs - Date.now());
+      }
+    }
+  }, 1000);
+}
+
+function _formatCountdown(ms) {
+  if (ms <= 0) return '00:00:00';
+  var days = Math.floor(ms / 86400000);
+  var hrs  = Math.floor((ms % 86400000) / 3600000);
+  var mins = Math.floor((ms % 3600000)  / 60000);
+  var secs = Math.floor((ms % 60000)    / 1000);
+  var pad  = function(n) { return String(n).padStart(2,'0'); };
+  return (days > 0 ? days + 'd ' : '') + pad(hrs) + ':' + pad(mins) + ':' + pad(secs);
+}
+
+// Call subscribeGameStartDate once Firebase is ready (after auth)
+document.addEventListener('DOMContentLoaded', function() {
+  setTimeout(function() {
+    if (window.firebaseDb && window.firebaseRef) {
+      subscribeGameStartDate();
+      startGameStartCountdown();
+    }
+  }, 1500);
+});
+
+// ═══════════════════════════════════════════════════════════════
+
 async function checkAndRunAutomaticUpdates() {
   // Only run if we have data loaded and Firebase available
   if (!workingNations.length) return;
   if (!window.firebaseDb || !window.firebaseRef || !window.firebaseGet || !window.firebaseSet) return;
 
+  // ── Skip updates until the game start date ──
+  if (!isGameStarted()) {
+    console.log('[AUTO UPDATE] Game has not started yet — skipping automatic updates.');
+    return;
+  }
 
   var now = new Date();
   var todayKey = now.getFullYear() + '-' +
