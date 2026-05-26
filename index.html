@@ -497,14 +497,71 @@ function initFirebaseAuth() {
       }
 
       try {
-        await auth.createUserWithEmailAndPassword(email, password);
-        displayAdminMessage(`Account created and signed in as ${email}.`, 'success');
-        console.log('[AUTH] Sign up successful for', email);
+        const cred = await auth.createUserWithEmailAndPassword(email, password);
+        await cred.user.sendEmailVerification();
+        await auth.signOut();
+        displayAdminMessage(
+          `✉ Verification email sent to ${email}. Please click the link in the email, then log in here.`,
+          'success'
+        );
+        // Pre-fill the email field so they can log in right after verifying
+        if (emailInput) emailInput.value = email;
+        if (passwordInput) passwordInput.value = '';
+        // Show the resend button in case the email goes missing
+        _showResendBtn(email);
+        console.log('[AUTH] Sign up: verification email sent for', email);
       } catch (error) {
         displayAdminMessage(`Sign up failed: ${error.message}`, 'error');
         console.error('Sign Up Error:', error, { email, passwordLength: password.length });
       }
     });
+  }
+
+  // ── Resend verification email helper ─────────────────────────
+  function _showResendBtn(email) {
+    var existing = document.getElementById('resendVerifyBtn');
+    if (existing) existing.remove();
+    var btn = document.createElement('button');
+    btn.id = 'resendVerifyBtn';
+    btn.type = 'button';
+    btn.textContent = '↺ Resend verification email';
+    btn.style.cssText = 'margin-top:8px;padding:7px 14px;font-family:inherit;font-size:12px;font-weight:500;color:var(--color-text-secondary);background:transparent;border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);cursor:pointer;display:block;';
+    btn.addEventListener('click', async function() {
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+      try {
+        // Sign in temporarily just to send, then sign back out
+        const emailInput = document.getElementById('adminEmail');
+        const passwordInput = document.getElementById('adminPassword');
+        const pw = String(passwordInput?.value || '');
+        if (!pw) {
+          displayAdminMessage('Enter your password so we can resend the verification email.', 'error');
+          btn.disabled = false;
+          btn.textContent = '↺ Resend verification email';
+          return;
+        }
+        const tempCred = await auth.signInWithEmailAndPassword(email, pw);
+        if (tempCred.user.emailVerified) {
+          displayAdminMessage('Your email is already verified — you can log in now!', 'success');
+          btn.remove();
+          return;
+        }
+        await tempCred.user.sendEmailVerification();
+        await auth.signOut();
+        displayAdminMessage('Verification email resent to ' + email + '.', 'success');
+        btn.textContent = '✓ Sent';
+        setTimeout(function() {
+          btn.disabled = false;
+          btn.textContent = '↺ Resend verification email';
+        }, 30000);
+      } catch(e) {
+        displayAdminMessage('Could not resend: ' + e.message, 'error');
+        btn.disabled = false;
+        btn.textContent = '↺ Resend verification email';
+      }
+    });
+    var msgEl = document.getElementById('adminMessage');
+    if (msgEl && msgEl.parentNode) msgEl.parentNode.insertBefore(btn, msgEl.nextSibling);
   }
 
   function isValidEmail(value) {
@@ -516,8 +573,22 @@ function initFirebaseAuth() {
     closeBtn.addEventListener('click', closeAdminLoginModal);
   }
 
-  auth.onAuthStateChanged((user) => {
+  auth.onAuthStateChanged(async (user) => {
     authReady = true;
+
+    // ── Block unverified accounts from accessing the app ──────
+    if (user && !user.emailVerified) {
+      // Silently sign them out and prompt them to verify first
+      var unverifiedEmail = user.email;
+      await auth.signOut();
+      displayAdminMessage(
+        `📧 Please verify your email address first. Check your inbox for ${unverifiedEmail} and click the verification link, then log in here.`,
+        'error'
+      );
+      _showResendBtn(unverifiedEmail);
+      return; // don't call setAdminAuthUI with this user
+    }
+
     setAdminAuthUI(user);
     if (user) {
       // Subscribe to battle results for badge updates
