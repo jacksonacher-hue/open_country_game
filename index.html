@@ -573,22 +573,8 @@ function initFirebaseAuth() {
     closeBtn.addEventListener('click', closeAdminLoginModal);
   }
 
-  auth.onAuthStateChanged(async (user) => {
+  auth.onAuthStateChanged((user) => {
     authReady = true;
-
-    // ── Block unverified accounts from accessing the app ──────
-    if (user && !user.emailVerified) {
-      // Silently sign them out and prompt them to verify first
-      var unverifiedEmail = user.email;
-      await auth.signOut();
-      displayAdminMessage(
-        `📧 Please verify your email address first. Check your inbox for ${unverifiedEmail} and click the verification link, then log in here.`,
-        'error'
-      );
-      _showResendBtn(unverifiedEmail);
-      return; // don't call setAdminAuthUI with this user
-    }
-
     setAdminAuthUI(user);
     if (user) {
       // Subscribe to battle results for badge updates
