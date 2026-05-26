@@ -471,6 +471,8 @@ function initFirebaseAuth() {
     });
   }
 
+  var _suppressAuthStateChange = false;
+
   const signupBtn = document.getElementById('adminSignupBtn');
   if (signupBtn) {
     signupBtn.addEventListener('click', async () => {
@@ -497,22 +499,30 @@ function initFirebaseAuth() {
       }
 
       try {
+        // Suppress onAuthStateChanged from logging the user in during signup
+        _suppressAuthStateChange = true;
         const cred = await auth.createUserWithEmailAndPassword(email, password);
-        await cred.user.sendEmailVerification();
+        console.log('[AUTH] Account created for', email, '— sending verification email…');
+        try {
+          await cred.user.sendEmailVerification();
+          console.log('[AUTH] Verification email sent to', email);
+        } catch (verifyErr) {
+          console.error('[AUTH] sendEmailVerification failed:', verifyErr);
+        }
         await auth.signOut();
+        _suppressAuthStateChange = false;
         displayAdminMessage(
           `✉ Verification email sent to ${email}. Please click the link in the email, then log in here.`,
           'success'
         );
-        // Pre-fill the email field so they can log in right after verifying
         if (emailInput) emailInput.value = email;
         if (passwordInput) passwordInput.value = '';
-        // Show the resend button in case the email goes missing
         _showResendBtn(email);
-        console.log('[AUTH] Sign up: verification email sent for', email);
       } catch (error) {
+        _suppressAuthStateChange = false;
+        try { await auth.signOut(); } catch(e) {}
         displayAdminMessage(`Sign up failed: ${error.message}`, 'error');
-        console.error('Sign Up Error:', error, { email, passwordLength: password.length });
+        console.error('[AUTH] Sign Up Error:', error);
       }
     });
   }
@@ -575,6 +585,7 @@ function initFirebaseAuth() {
 
   auth.onAuthStateChanged((user) => {
     authReady = true;
+    if (_suppressAuthStateChange) return; // signup in progress — ignore
     setAdminAuthUI(user);
     if (user) {
       // Subscribe to battle results for badge updates
