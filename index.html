@@ -2683,29 +2683,9 @@ function renderActionsTab() {
     return;
   }
 
-  // ── Game start date lockout (non-admins see a countdown) ──
-  if (!isGameStarted() && !isAdminUser()) {
-    var remaining = _gameStartTs - Date.now();
-    infoEl.innerHTML = '';
-    contentEl.innerHTML =
-      '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 24px;gap:20px;text-align:center;">' +
-        '<div style="font-size:48px;">⏳</div>' +
-        '<div style="font-size:20px;font-weight:700;color:var(--color-accent);letter-spacing:1px;text-transform:uppercase;">Game Not Yet Started</div>' +
-        '<div style="font-size:13px;color:var(--color-text-secondary);max-width:400px;">The game begins on <strong style="color:var(--color-text-primary);">' +
-          new Date(_gameStartTs).toLocaleString() + '</strong>.<br>Actions will be unlocked automatically when the timer reaches zero.</div>' +
-        '<div style="margin-top:8px;font-family:\'IBM Plex Mono\',monospace;font-size:42px;font-weight:700;color:var(--color-text-primary);letter-spacing:4px;" id="actionsCountdownDisplay">' +
-          _formatCountdown(remaining) +
-        '</div>' +
-        '<div style="font-size:11px;color:var(--color-text-tertiary);">days · hours · minutes · seconds</div>' +
-      '</div>';
-    return;
-  }
-
   var assigned = getAssignedPlayer(user.email);
   var assignedIdx = findAssignedPlayerIdx();
   var p = assignedIdx >= 0 ? workingNations[assignedIdx] : null;
-
-  // Header info bar with player stats
   if (p) {
     var mil = parseFloat(p.military) || 0;
     var def = parseFloat(p.defence) || 0;
@@ -2775,6 +2755,24 @@ function renderActionsTab() {
       var countEl = document.getElementById('selfRegProvCount');
       if (countEl) { countEl.textContent = cnt + ' / 3 selected'; countEl.style.color = cnt === 3 ? '#4ade80' : 'var(--color-text-tertiary)'; }
     });
+    return;
+  }
+
+  // ── Game start date lockout: nation created but game not yet live ──
+  // (Admins bypass this so they can test actions any time)
+  if (!isGameStarted() && !isAdminUser()) {
+    var remaining = _gameStartTs - Date.now();
+    contentEl.innerHTML =
+      '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 24px;gap:20px;text-align:center;">' +
+        '<div style="font-size:48px;">⏳</div>' +
+        '<div style="font-size:20px;font-weight:700;color:var(--color-accent);letter-spacing:1px;text-transform:uppercase;">Game Not Yet Started</div>' +
+        '<div style="font-size:13px;color:var(--color-text-secondary);max-width:400px;">Your nation is set up and ready. The game begins on <strong style="color:var(--color-text-primary);">' +
+          new Date(_gameStartTs).toLocaleString() + '</strong>.<br>Actions will unlock automatically when the timer reaches zero.</div>' +
+        '<div style="margin-top:8px;font-family:\'IBM Plex Mono\',monospace;font-size:42px;font-weight:700;color:var(--color-text-primary);letter-spacing:4px;" id="actionsCountdownDisplay">' +
+          _formatCountdown(remaining) +
+        '</div>' +
+        '<div style="font-size:11px;color:var(--color-text-tertiary);">days · hours · minutes · seconds</div>' +
+      '</div>';
     return;
   }
 
