@@ -77001,15 +77001,7 @@ function _updateLockoutHud() {
 
 // Run immediately (DOMContentLoaded has almost certainly already fired at this point
 // since this script is near the bottom of the page)
-
-  var t = getSydneyTime();
-  var pad = function(n){ return n < 10 ? '0'+n : ''+n; };
-  return pad(t.h)+':'+pad(t.m)+':'+pad(t.s);
-})());
 _initLockoutCache(); // check once, cache result
-
-
-            '| LOCKOUT_END:', LOCKOUT_END_H + ':' + (LOCKOUT_END_M < 10 ? '0' : '') + LOCKOUT_END_M);
 
 applyLockoutState();
 
