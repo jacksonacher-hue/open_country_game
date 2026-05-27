@@ -71706,6 +71706,40 @@ let mapProvinceOwners = {};
 let mapPlayerColors = {};
 let mapAllianceColors = {};
 
+// ── Performance: debounce renderMap so rapid-fire calls collapse into one frame ──
+var _renderMapRafId = null;
+var _renderMapImmediate = false;
+(function() {
+  var _renderMapSync; // will be assigned after renderMap is defined
+  window._scheduleRenderMap = function(immediate) {
+    if (immediate) {
+      if (_renderMapRafId) { cancelAnimationFrame(_renderMapRafId); _renderMapRafId = null; }
+      if (typeof renderMap === 'function') renderMap();
+      return;
+    }
+    if (_renderMapRafId) return; // already scheduled
+    _renderMapRafId = requestAnimationFrame(function() {
+      _renderMapRafId = null;
+      if (typeof renderMap === 'function') renderMap();
+    });
+  };
+})();
+
+// ── Performance: pre-indexed province data lookup (O(1) instead of O(n) find) ──
+var _provinceByNumber = {}; // rebuilt in invalidateFogCache / populateMap
+function _rebuildProvinceIndex() {
+  _provinceByNumber = {};
+  if (typeof provincesData !== 'undefined') {
+    provincesData.forEach(function(pr) {
+      var n = parseInt(pr.number);
+      if (n) _provinceByNumber[n] = pr;
+    });
+  }
+}
+
+// ── Performance: owner cache — skip recomputing mapProvinceOwners when inputs haven't changed ──
+var _ownerCacheKey = null;
+
 // Deterministic colour: same player name always maps to same colour regardless of load order
 function hashNameToColor(name) {
   // Prefer registered user colour if available
@@ -71751,7 +71785,7 @@ function populateMap() {
     weekSel.appendChild(opt);
   });
   weekSel.value = nationSheetNames[nationSheetNames.length - 1];
-  weekSel.onchange = function() { window._mapHighlight = null; renderMap(); };
+  weekSel.onchange = function() { window._mapHighlight = null; _ownerCacheKey = null; window._scheduleRenderMap(); };
   var colorModeEl = document.getElementById('mapColorMode');
   colorModeEl.onchange = function() {
     window._mapHighlight = null;
@@ -71768,7 +71802,7 @@ function populateMap() {
     var opt = document.createElement('option'); opt.value = name; opt.textContent = name;
     relSel.appendChild(opt);
   });
-  relSel.onchange = function() { renderMap(); };
+  relSel.onchange = function() { window._scheduleRenderMap(); };
 
   // Stable colours from ALL weeks — derived by hashing name, not load order
   mapPlayerColors = {};
@@ -71793,6 +71827,7 @@ function populateMap() {
   });
 
   setupMapTooltip();
+  _rebuildProvinceIndex(); // build O(1) province lookup
   renderMap();
 }
 
@@ -71971,6 +72006,8 @@ function getFogWeek0Data() {
 
 // Invalidate fog cache when data reloads
 function invalidateFogCache() {
+  _ownerCacheKey = null;   // force mapProvinceOwners rebuild on next renderMap
+  _rebuildProvinceIndex(); // keep O(1) province lookup in sync
   _fogWeek0ProvinceOwners = null;
   _fogWeek0NationsData = null;
   _fogCache = null;
@@ -72007,28 +72044,43 @@ function renderMap() {
   var allianceColors = mapAllianceColors;
 
   // Build province owners from province sheet ownership data — colour by highest % owner
-  mapProvinceOwners = {};
-  // Use province ownership columns (owner1-4) — this is the authoritative source
-  provincesData.forEach(function(pr) {
-    var num = parseInt(pr.number);
-    if (!num) return;
-    var owners = getProvinceOwners(pr);
-    if (!owners.length) return;
-    var topOwner = owners.reduce(function(a, b) { return a.percent > b.percent ? a : b; });
-    var matchedPlayer = players.find(function(p) {
-      var pName = (p.first_name + ' ' + p.surname).trim().toLowerCase();
-      return pName === topOwner.name.toLowerCase() || pName.includes(topOwner.name.toLowerCase()) || topOwner.name.toLowerCase().includes(pName);
+  // ── Performance: cache owners; skip rebuild if week/mode inputs haven't changed ──
+  var ownerCacheKey = weekSheet + '|' + (fogVisible ? [...fogVisible].sort().join(',') : 'admin');
+  if (_ownerCacheKey !== ownerCacheKey) {
+    _ownerCacheKey = ownerCacheKey;
+    mapProvinceOwners = {};
+    // ── Performance: build a lowercase-name → player lookup so inner loop is O(1) ──
+    var playerNameMap = {}; // lowerName → player object
+    players.forEach(function(p) {
+      playerNameMap[(p.first_name + ' ' + p.surname).trim().toLowerCase()] = p;
     });
-    if (matchedPlayer) {
-      var name = (matchedPlayer.first_name + ' ' + matchedPlayer.surname).trim();
-      var alliance = (matchedPlayer.alliances || '').split(',')[0].trim();
-      mapProvinceOwners[num] = {
-        player: name, alliance: alliance, nation: matchedPlayer.nation || '',
-        playerColor: playerColors[name], allianceColor: allianceColors[alliance] || '#999',
-        allOwners: owners
-      };
-    }
-  });
+    // Use province ownership columns (owner1-4) — this is the authoritative source
+    provincesData.forEach(function(pr) {
+      var num = parseInt(pr.number);
+      if (!num) return;
+      var owners = getProvinceOwners(pr);
+      if (!owners.length) return;
+      var topOwner = owners.reduce(function(a, b) { return a.percent > b.percent ? a : b; });
+      var topLower = topOwner.name.toLowerCase();
+      // O(1) exact match first, then fallback substring scan
+      var matchedPlayer = playerNameMap[topLower] || (function() {
+        var keys = Object.keys(playerNameMap);
+        for (var ki = 0; ki < keys.length; ki++) {
+          if (keys[ki].includes(topLower) || topLower.includes(keys[ki])) return playerNameMap[keys[ki]];
+        }
+        return null;
+      })();
+      if (matchedPlayer) {
+        var name = (matchedPlayer.first_name + ' ' + matchedPlayer.surname).trim();
+        var alliance = (matchedPlayer.alliances || '').split(',')[0].trim();
+        mapProvinceOwners[num] = {
+          player: name, alliance: alliance, nation: matchedPlayer.nation || '',
+          playerColor: playerColors[name], allianceColor: allianceColors[alliance] || '#999',
+          allOwners: owners
+        };
+      }
+    });
+  }
 
   // Generate CSS rules
   var cssRules = [];
@@ -72134,7 +72186,7 @@ function renderMap() {
     Object.entries(PROVINCE_SVG_MAP).forEach(function(entry) {
       var provNum = parseInt(entry[0]);
       if (!provNum) return;
-      var prov = provincesData.find(function(p) { return parseInt(p.number) === provNum; });
+      var prov = _provinceByNumber[provNum];
       var hasTradeNode = prov && prov.trade_nodes && String(prov.trade_nodes).trim() !== '' && String(prov.trade_nodes).trim() !== '—' && String(prov.trade_nodes).trim() !== '0';
       if (hasTradeNode) {
         entry[1].forEach(function(id) { cssRules.push('#' + CSS.escape(id) + '{fill:var(--color-accent) !important;opacity:1 !important}'); });
@@ -72200,7 +72252,10 @@ function renderMap() {
   applyMapHighlightClasses();
 
   // ── Apply / remove .stale-intel class on SVG paths ──
-  if (mapSvgEl) {
+  // Performance: track last fog key so we only re-walk the DOM when visibility actually changed
+  var _fogDomKey = fogVisible !== null ? ('fog|' + ownerCacheKey) : 'admin';
+  if (mapSvgEl && renderMap._lastFogDomKey !== _fogDomKey) {
+    renderMap._lastFogDomKey = _fogDomKey;
     if (fogVisible !== null) {
       Object.entries(PROVINCE_SVG_MAP).forEach(function(entry) {
         var provNum = parseInt(entry[0]);
@@ -72218,7 +72273,7 @@ function renderMap() {
       // Admin or no filter — remove all stale-intel classes in one pass
       mapSvgEl.querySelectorAll('.stale-intel').forEach(function(el) { el.classList.remove('stale-intel'); });
     }
-  }
+  } // end fog DOM key guard
 
   // ── Legend ──
   var legendEl = document.getElementById('mapLegend');
@@ -72279,7 +72334,7 @@ function renderMap() {
     var provMap = window._mapProvStatMap || {};
     var ranked = Object.entries(provMap).filter(function(e){return e[1]>0;}).sort(function(a,b){return b[1]-a[1];});
     var rankHtml = ranked.slice(0,15).map(function(e) {
-      var pr = provincesData.find(function(p){return parseInt(p.number)===parseInt(e[0]);});
+      var pr = _provinceByNumber[parseInt(e[0])];
       var label = pr ? (pr.suffix || pr.prefix || '#'+e[0]) : '#'+e[0];
       return choroRankRow(label, e[1], h, mxV);
     }).join('');
@@ -72611,12 +72666,9 @@ function setupMapTooltip() {
   // Use the module-level reverse map built once at startup
   var svgIdToProvince = _svgIdToProvNum;
 
-  // Province data cache
-  var provCache = {};
+  // Province data cache — use global index for O(1) lookup
   function getProvData(num) {
-    if (provCache[num] !== undefined) return provCache[num];
-    provCache[num] = provincesData.find(function(p) { return parseInt(p.number) === num; }) || null;
-    return provCache[num];
+    return _provinceByNumber[num] || null;
   }
 
   var hoveredProvince = null;
@@ -74300,15 +74352,24 @@ async function selfRegisterPlayer() {
     (window.NATION_COLS || []).forEach(function(c){ newNation[c.key] = ''; });
     newNation.first_name = firstName;
     newNation.surname = surname;
+    newNation.econ = '5';
     newNation.military = '5';
     newNation.defence = '5';
-    newNation.econ = '10';
-    newNation.food = '0.5';
-    newNation.happiness = '0.5';
-    newNation.stability = '0.5';
+    newNation.food = '100';
+    newNation.happiness = '100';
+    newNation.stability = '100';
+    newNation.provinces = '0';
+    newNation.econIncome = '0';
+    newNation.milIncome = '0';
+    newNation.mobilisedIncome = '0';
+    newNation.mobilised = '5';
     newNation.wars = '';
     newNation.alliances = '';
+    newNation.truced = '';
+    newNation.puppets_of = '';
+    newNation.reagent = '';
     newNation.exports = '';
+    newNation.subsidies = '';
     workingNations.push(newNation);
     var newIdx = workingNations.length - 1;
     // Assign 3 starting provinces
