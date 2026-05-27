@@ -57,8 +57,8 @@ var _sandboxMode = false;
 var _realFirebaseSet    = set;
 var _realFirebaseUpdate = update;
 
-function _sandboxSet(ref, val)    { if (_sandboxMode) { console.log('[SANDBOX] blocked set to', typeof ref === 'object' ? ref.toString() : ref); return Promise.resolve(); } return _realFirebaseSet(ref, val); }
-function _sandboxUpdate(ref, val) { if (_sandboxMode) { console.log('[SANDBOX] blocked update'); return Promise.resolve(); } return _realFirebaseUpdate(ref, val); }
+function _sandboxSet(ref, val)    { if (_sandboxMode) { return Promise.resolve(); } return _realFirebaseSet(ref, val); }
+function _sandboxUpdate(ref, val) { if (_sandboxMode) { return Promise.resolve(); } return _realFirebaseUpdate(ref, val); }
 
 window.firebaseSet    = _sandboxSet;
 window.firebaseUpdate = _sandboxUpdate;
@@ -83,7 +83,7 @@ function setSandboxMode(on) {
   if (typeof renderMap === 'function') renderMap();
   if (typeof populateDashboard === 'function') populateDashboard();
   if (typeof refreshAutoDropdowns === 'function') refreshAutoDropdowns();
-  console.log('[SANDBOX] mode', _sandboxMode ? 'ON' : 'OFF');
+
 }
 window.setSandboxMode = setSandboxMode;
 
@@ -100,7 +100,7 @@ async function registerUserInFirebase(user) {
       lastSeen: Date.now(),
       uid: user.uid || ''
     }));
-  } catch(e) { console.warn('registerUserInFirebase failed', e); }
+  } catch(e) { }
 }
 
 async function loadRegisteredUsersIntoDropdown() {
@@ -119,7 +119,7 @@ async function loadRegisteredUsersIntoDropdown() {
       users.map(function(u) {
         return '<option value="' + u.email + '">' + u.email + '</option>';
       }).join('');
-  } catch(e) { console.warn('loadRegisteredUsersIntoDropdown failed', e); }
+  } catch(e) { }
 }
 window.loadRegisteredUsersIntoDropdown = loadRegisteredUsersIntoDropdown;
 
@@ -136,7 +136,7 @@ function updateRegisteredUserColors() {
         window.registeredUserColors[assignedName] = u.color;
       }
     });
-  } catch(e) { console.warn('updateRegisteredUserColors failed', e); }
+  } catch(e) { }
 }
 
 function getMyRegisteredUserKey() {
@@ -169,7 +169,7 @@ async function savePlayerColor(hex) {
     }
     renderMap();
     showAdminToast('Saved colour ' + hex, 'success');
-  } catch(e) { console.error('savePlayerColor failed', e); showAdminToast('Save failed', 'error'); }
+  } catch(e) { showAdminToast('Save failed', 'error'); }
 }
 window.savePlayerColor = savePlayerColor;
 function displayAdminMessage(message, type) {
@@ -210,7 +210,7 @@ function showAdminToast(message, type = 'success') {
 
 async function refreshFirebaseOnce() {
   showUploadStatus('Refreshing latest Firebase data...', 'loading');
-  console.log('[SYNC] refreshFirebaseOnce: start');
+
   try {
     const weeksRef = window.firebaseRef(window.firebaseDb, 'weeks');
     const snapshot = await get(weeksRef);
@@ -221,10 +221,10 @@ async function refreshFirebaseOnce() {
     const data = snapshot.val();
     populateWorkbookFromFirebaseData(data);
     showUploadStatus('Latest Firebase data loaded.', 'success');
-    console.log('[SYNC] refreshFirebaseOnce: loaded latest Firebase data');
+
   } catch (error) {
     showUploadStatus('Failed to refresh Firebase: ' + error.message, 'error');
-    console.error('[SYNC] refreshFirebaseOnce: error', error);
+
     throw error;
   }
 }
@@ -317,17 +317,17 @@ async function uploadWorkbookToFirebase() {
     return;
   }
   showUploadStatus('Uploading changes to Firebase...', 'loading');
-  console.log('[SYNC] uploadWorkbookToFirebase: start');
+
   if (!currentWorkbook || !nationSheetNames || !nationSheetNames.length) {
     var msg = 'No workbook data available for upload.';
-    console.error('[SYNC] uploadWorkbookToFirebase:', msg);
+
     showUploadStatus(msg, 'error');
     throw new Error(msg);
   }
   var uploadData = buildFirebaseWeeksPayload();
   if (!uploadData || !Object.keys(uploadData.payload || {}).length) {
     var msg2 = 'No weeks found in payload.';
-    console.error('[SYNC] uploadWorkbookToFirebase:', msg2);
+
     showUploadStatus(msg2, 'error');
     throw new Error(msg2);
   }
@@ -335,7 +335,7 @@ async function uploadWorkbookToFirebase() {
   await window.firebaseSet(weeksRef, null);
   await window.firebaseSet(weeksRef, uploadData.payload);
   showUploadStatus('Upload complete.', 'success');
-  console.log('[SYNC] uploadWorkbookToFirebase: upload complete', { weekCount: Object.keys(uploadData.payload).length });
+
 }
 
 async function performActionWithRefresh(actionLabel, actionFn) {
@@ -357,7 +357,7 @@ async function performActionWithRefresh(actionLabel, actionFn) {
     return true;
   } catch (error) {
     displayAdminMessage(actionLabel + ' failed: ' + error.message, 'error');
-    console.error('[ACTION] ' + actionLabel + ' failed', error);
+
     return false;
   }
 }
@@ -433,7 +433,7 @@ let authReady = false;
 
 function initFirebaseAuth() {
   auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch((err) => {
-    console.warn('Failed to set auth persistence:', err);
+
   });
 
   const loginForm = document.getElementById('adminLoginForm');
@@ -447,7 +447,7 @@ function initFirebaseAuth() {
         displayAdminMessage(`Successfully logged in as ${email}`, 'success');
       } catch (error) {
         displayAdminMessage(`Login failed: ${error.message}`, 'error');
-        console.error('Login Error:', error);
+
       }
     });
   }
@@ -461,7 +461,7 @@ function initFirebaseAuth() {
         displayAdminMessage('Signed out successfully.', 'success');
       } catch (error) {
         displayAdminMessage(`Sign out failed: ${error.message}`, 'error');
-        console.error('Sign Out Error:', error);
+
       }
     });
   }
@@ -471,7 +471,7 @@ function initFirebaseAuth() {
         await auth.signOut();
         showAdminToast('Signed out successfully.', 'success');
       } catch (error) {
-        console.error('Sign Out Error:', error);
+
       }
     });
   }
@@ -485,21 +485,21 @@ function initFirebaseAuth() {
       const passwordInput = document.getElementById('adminPassword');
       const email = String(emailInput?.value || '').trim();
       const password = String(passwordInput?.value || '');
-      console.log('[AUTH] Sign up clicked', { email, passwordLength: password.length });
+
 
       if (!email || !password) {
         displayAdminMessage('Enter both email and password to sign up.', 'error');
-        console.warn('[AUTH] Sign up validation failed: missing email or password');
+
         return;
       }
       if (!isValidEmail(email)) {
         displayAdminMessage('Enter a valid email address.', 'error');
-        console.warn('[AUTH] Sign up validation failed: invalid email', email);
+
         return;
       }
       if (password.length < 6) {
         displayAdminMessage('Password must be at least 6 characters.', 'error');
-        console.warn('[AUTH] Sign up validation failed: password too short');
+
         return;
       }
 
@@ -510,13 +510,13 @@ function initFirebaseAuth() {
         _suppressAuthStateChange = true;
 
         const cred = await auth.createUserWithEmailAndPassword(email, password);
-        console.log('[AUTH] Account created for', email, '— sending verification email…');
+
 
         await cred.user.sendEmailVerification();
-        console.log('[AUTH] sendEmailVerification() resolved — email sent!');
+
 
         await auth.signOut();
-        console.log('[AUTH] Signed out after signup.');
+
 
         _suppressAuthStateChange = false;
 
@@ -532,7 +532,7 @@ function initFirebaseAuth() {
         _suppressAuthStateChange = false;
         try { await auth.signOut(); } catch(e) {}
         displayAdminMessage(`Sign up failed: ${error.message}`, 'error');
-        console.error('[AUTH] Sign Up Error:', error);
+
       }
     });
   }
@@ -568,7 +568,7 @@ function initFirebaseAuth() {
           return;
         }
         await tempCred.user.sendEmailVerification();
-        console.log('[AUTH] Resend: sendEmailVerification() resolved.');
+
         await auth.signOut();
         _suppressAuthStateChange = false;
         displayAdminMessage('Verification email resent to ' + email + '.', 'success');
@@ -2371,13 +2371,13 @@ let userAssignments = loadUserAssignments();
 
 function loadUserAssignments() {
   // Compat SDK is synchronous — no setTimeout needed, globals are ready immediately
-  console.log('[LOAD] loadUserAssignments called. Firebase globals — firebaseDb:', !!window.firebaseDb, '| firebaseRef:', !!window.firebaseRef, '| firebaseOnValue:', !!window.firebaseOnValue);
+
   try {
     if (window.firebaseDb && window.firebaseRef && window.firebaseOnValue) {
-      console.log('[LOAD] Attaching onValue listener to "userAssignments"...');
+
       window.firebaseOnValue(window.firebaseRef(window.firebaseDb, 'userAssignments'), function(snap) {
         var raw = snap.val() || {};
-        console.log('[LOAD] onValue fired. Raw Firebase data:', JSON.stringify(raw));
+
         // Decode Firebase keys back to emails.
         // Keys were stored with dots replaced by the token "|dot|" (safe, reversible).
         // Legacy keys used plain underscore replacement — fall back gracefully.
@@ -2394,7 +2394,7 @@ function loadUserAssignments() {
           decoded[emailGuess] = raw[k];
         });
         userAssignments = decoded;
-        console.log('[LOAD] userAssignments set to:', JSON.stringify(userAssignments));
+
         // Re-run auth UI so logged-in users see their assignment immediately
         if (typeof setAdminAuthUI === 'function' && window.firebaseAuth && window.firebaseAuth.currentUser) {
           setAdminAuthUI(window.firebaseAuth.currentUser);
@@ -2406,23 +2406,23 @@ function loadUserAssignments() {
         if (typeof updateEspionageTabVisibility === 'function') updateEspionageTabVisibility();
         if (typeof subscribeAllianceGcs === 'function') subscribeAllianceGcs();
       }, function(error) {
-        console.error('[LOAD] onValue error (likely a Firebase security rules denial):', error.code, error.message);
+
       });
     } else {
-      console.error('[LOAD] Firebase globals not ready — subscription skipped. userAssignments will be empty.');
+
     }
   } catch(e) {
-    console.error('[LOAD] Exception during Firebase subscribe:', e);
+
   }
   return {};
 }
 
 function saveUserAssignments() {
   // Compat SDK is synchronous — globals always ready by the time this is called
-  console.log('[SAVE] saveUserAssignments called. userAssignments:', JSON.stringify(userAssignments));
-  console.log('[SAVE] Firebase ready? firebaseDb:', !!window.firebaseDb, '| firebaseRef:', !!window.firebaseRef, '| firebaseSet:', !!window.firebaseSet);
+
+
   if (!window.firebaseDb || !window.firebaseRef || !window.firebaseSet) {
-    console.error('[SAVE] Firebase globals missing — assignment NOT saved.');
+
     return;
   }
   // Encode email keys for Firebase (dots not allowed in keys).
@@ -2431,51 +2431,51 @@ function saveUserAssignments() {
   Object.keys(userAssignments).forEach(function(email) {
     encoded[email.replace(/\./g, '|dot|')] = userAssignments[email];
   });
-  console.log('[SAVE] Writing to Firebase path "userAssignments" (encoded keys):', JSON.stringify(encoded));
+
   window.firebaseSet(window.firebaseRef(window.firebaseDb, 'userAssignments'), encoded)
     .then(function() {
-      console.log('[SAVE] SUCCESS: userAssignments written to Firebase:', JSON.stringify(userAssignments));
+
     })
     .catch(function(e) {
-      console.error('[SAVE] FAILED: Firebase write error. code:', e.code, '| message:', e.message, '| full:', e);
+
     });
 }
 
 function getAssignedPlayer(email) {
   if (!email) {
-    console.log('[ASSIGN] getAssignedPlayer: No email provided');
+
     return '';
   }
   var assigned = userAssignments[email.toLowerCase()] || '';
-  console.log('[ASSIGN] getAssignedPlayer: Email', email, 'assigned to', assigned);
+
   return assigned;
 }
 
 function setAssignedPlayer(email, playerName) {
-  console.log('[ASSIGN] setAssignedPlayer: Setting', email, 'to', playerName);
+
   if (!email || !playerName) return;
   userAssignments[email.toLowerCase()] = playerName;
   saveUserAssignments();
-  console.log('[ASSIGN] setAssignedPlayer: Saved assignments', userAssignments);
+
 }
 
 function assignUserToPlayer() {
   var emailInput = document.getElementById('assignUserEmail');
   var playerSelect = document.getElementById('assignPlayerSelect');
   if (!emailInput || !playerSelect) {
-    console.log('[ASSIGN] assignUserToPlayer: Missing DOM elements');
+
     return;
   }
   var email = emailInput.value.trim().toLowerCase();
   var player = playerSelect.value;
-  console.log('[ASSIGN] assignUserToPlayer: Attempting to assign', email, 'to', player);
+
   if (!email || !player) {
-    console.log('[ASSIGN] assignUserToPlayer: Missing email or player');
+
     displayAdminMessage('Enter a user email and choose a player before assigning.', 'error');
     return;
   }
   setAssignedPlayer(email, player);
-  console.log('[ASSIGN] assignUserToPlayer: Successfully assigned', email, 'to', player);
+
   displayAdminMessage(`Assigned ${email} to ${player}.`, 'success');
   renderAssignmentList();
   renderActionsTab();
@@ -2484,21 +2484,21 @@ function assignUserToPlayer() {
 function createPlayer() {
   var firstName = document.getElementById('createPlayerFirstName')?.value.trim();
   var surname = document.getElementById('createPlayerSurname')?.value.trim();
-  console.log('[CREATE] createPlayer: Attempting to create player', firstName, surname);
+
   if (!firstName || !surname) {
-    console.log('[CREATE] createPlayer: Missing first name or surname');
+
     displayAdminMessage('Enter both first name and surname to create a player.', 'error');
     return;
   }
   var fullName = firstName + ' ' + surname;
-  console.log('[CREATE] createPlayer: Checking for duplicate player', fullName);
+
   if (workingNations.some(function(n) { return normalizeName((n.first_name + ' ' + n.surname).trim()) === normalizeName(fullName); })) {
-    console.log('[CREATE] createPlayer: Player already exists');
+
     displayAdminMessage('A player with that name already exists.', 'error');
     return;
   }
 
-  console.log('[CREATE] createPlayer: Creating new player object');
+
   var player = {};
   NATION_COLS.forEach(function(c) {
     player[c.key] = '';
@@ -2524,24 +2524,24 @@ function createPlayer() {
   player.exports = '';
   player.subsidies = '';
 
-  console.log('[CREATE] createPlayer: Adding player to workingNations');
+
   workingNations.push(player);
-  console.log('[CREATE] createPlayer: Player added, syncing trade nodes');
+
   syncTradeNodes();
-  console.log('[CREATE] createPlayer: Saving to sheets');
+
   syncWorkingDataToSheets();
-  console.log('[CREATE] createPlayer: Refreshing dropdowns');
+
   refreshAutoDropdowns();
-  console.log('[CREATE] createPlayer: Rendering table');
+
   renderWorkingTable();
-  console.log('[CREATE] createPlayer: Logging creation');
+
   addToLog('Created player: ' + fullName);
-  console.log('[CREATE] createPlayer: Showing success message');
+
   displayAdminMessage('Created player ' + fullName + '.', 'success');
-  console.log('[CREATE] createPlayer: Clearing form fields');
+
   document.getElementById('createPlayerFirstName').value = '';
   document.getElementById('createPlayerSurname').value = '';
-  console.log('[CREATE] createPlayer: Complete');
+
 }
 
 function inferExportStatFromName(name) {
@@ -2578,14 +2578,14 @@ function updateWorkingNationProvinceStats() {
 function assignStartingProvinces() {
   var playerName = document.getElementById('startingProvincePlayer')?.value;
   var provinceSelect = document.getElementById('startingProvinceSelect');
-  console.log('[PROVINCE] assignStartingProvinces: Starting assignment for player', playerName);
+
   if (!playerName) {
-    console.log('[PROVINCE] assignStartingProvinces: No player selected');
+
     displayAdminMessage('Select a player for starting provinces.', 'error');
     return;
   }
   if (!provinceSelect) {
-    console.log('[PROVINCE] assignStartingProvinces: Province select element not found');
+
     return;
   }
   var selected = [];
@@ -2593,18 +2593,18 @@ function assignStartingProvinces() {
     var opt = provinceSelect.options[i];
     if (opt.selected) selected.push(opt.value);
   }
-  console.log('[PROVINCE] assignStartingProvinces: Selected provinces', selected);
+
   if (!selected.length) {
-    console.log('[PROVINCE] assignStartingProvinces: No provinces selected');
+
     displayAdminMessage('Select one or more provinces.', 'error');
     return;
   }
   var player = workingNations.find(function(n) {
     return normalizeName((n.first_name + ' ' + n.surname).trim()) === normalizeName(playerName);
   });
-  console.log('[PROVINCE] assignStartingProvinces: Found player', player ? (player.first_name + ' ' + player.surname) : 'null');
+
   if (!player) {
-    console.log('[PROVINCE] assignStartingProvinces: Player not found');
+
     displayAdminMessage('Selected player not found.', 'error');
     return;
   }
@@ -2614,10 +2614,10 @@ function assignStartingProvinces() {
   selected.forEach(function(provNum) {
     var province = workingProvinces.find(function(p) { return String(p.number) === String(provNum); });
     if (!province) {
-      console.log('[PROVINCE] assignStartingProvinces: Province not found', provNum);
+
       return;
     }
-    console.log('[PROVINCE] assignStartingProvinces: Assigning province', provNum, 'to', playerName);
+
     province.starting_player = playerName;
     province.owner1 = playerName;
     province.owner2 = province.owner3 = province.owner4 = '';
@@ -2629,60 +2629,60 @@ function assignStartingProvinces() {
       player.exports = (player.exports || '').trim();
       player.exports = player.exports ? player.exports + ', ' + exportItem : exportItem;
       addedExports.push(province.original_export.trim());
-      console.log('[PROVINCE] assignStartingProvinces: Added export', exportItem, 'to player');
+
     }
   });
 
   if (!assigned.length) {
-    console.log('[PROVINCE] assignStartingProvinces: No valid provinces assigned');
+
     displayAdminMessage('No valid provinces were selected.', 'error');
     return;
   }
 
-  console.log('[PROVINCE] assignStartingProvinces: Syncing trade nodes');
+
   syncTradeNodes();
-  console.log('[PROVINCE] assignStartingProvinces: Updating nation stats');
+
   updateWorkingNationProvinceStats();
-  console.log('[PROVINCE] assignStartingProvinces: Rendering table');
+
   renderWorkingTable();
-  console.log('[PROVINCE] assignStartingProvinces: Refreshing dropdowns');
+
   refreshAutoDropdowns();
-  console.log('[PROVINCE] assignStartingProvinces: Saving to sheets');
+
   syncWorkingDataToSheets();
-  console.log('[PROVINCE] assignStartingProvinces: Logging assignment');
+
   addToLog('Starting provinces assigned to ' + playerName + ': ' + assigned.join(', ') + (addedExports.length ? ' (exports: ' + addedExports.join(', ') + ')' : ''));
-  console.log('[PROVINCE] assignStartingProvinces: Showing success message');
+
   displayAdminMessage('Assigned starting provinces to ' + playerName + '.', 'success');
 }
 
 function renderAssignmentList() {
   var listEl = document.getElementById('userAssignmentList');
-  console.log('[RENDER] renderAssignmentList: Rendering assignment list, element found:', !!listEl);
+
   if (!listEl) return;
   var entries = Object.keys(userAssignments || {});
-  console.log('[RENDER] renderAssignmentList: Current assignments', userAssignments);
+
   if (!entries.length) {
     listEl.innerHTML = '<div>No assignments yet.</div>';
-    console.log('[RENDER] renderAssignmentList: No assignments to display');
+
     return;
   }
   listEl.innerHTML = entries.map(function(email) {
     return '<div>' + esc(email) + ' → ' + esc(userAssignments[email]) + '</div>';
   }).join('');
-  console.log('[RENDER] renderAssignmentList: Rendered', entries.length, 'assignments');
+
 }
 
 function renderActionsTab() {
-  console.log('[ACTIONS] renderActionsTab: Rendering actions tab');
+
   var infoEl = document.getElementById('actionsUserInfo');
   var contentEl = document.getElementById('actionsTabContent');
   if (!infoEl || !contentEl) {
-    console.log('[ACTIONS] renderActionsTab: Missing DOM elements');
+
     return;
   }
   var user = window.firebaseAuth.currentUser;
   if (!user) {
-    console.log('[ACTIONS] renderActionsTab: No user logged in');
+
     infoEl.innerHTML = '';
     contentEl.innerHTML = '<div style="color:var(--color-text-tertiary);padding:40px;text-align:center;font-size:14px;">🔒 Log in to access player actions.</div>';
     return;
@@ -3031,7 +3031,7 @@ function renderActionsTab() {
         });
       }
       if (colorPreview) colorPreview.style.background = userColor || 'transparent';
-    } catch(e) { console.warn('init colour input failed', e); }
+    } catch(e) { }
   })();
 
   // Preview battle sides on load if war already selected
@@ -3169,16 +3169,16 @@ function renderPlayerAssignmentPanel() {
 
 function updateAssignmentDropDowns() {
   var select = document.getElementById('assignPlayerSelect');
-  console.log('[DROPDOWN] updateAssignmentDropDowns: Updating player dropdown, element found:', !!select);
+
   if (!select) return;
   var currentValue = select.value;
-  console.log('[DROPDOWN] updateAssignmentDropDowns: Current value', currentValue);
+
   select.innerHTML = '<option value="">— Select player —</option>' + workingNations.map(function(n) {
     var name = (n.first_name + ' ' + n.surname).trim();
     return '<option value="' + esc(name) + '">' + esc(name) + '</option>';
   }).join('');
   select.value = currentValue;
-  console.log('[DROPDOWN] updateAssignmentDropDowns: Dropdown updated with', workingNations.length, 'players, restored value:', select.value);
+
 }
 
 function updateAssignEmailField() {
@@ -3249,15 +3249,15 @@ function findAssignedPlayerIdx() {
   }
   var user = window.firebaseAuth.currentUser;
   var assigned = user ? getAssignedPlayer(user.email) : '';
-  console.log('[ASSIGN] findAssignedPlayerIdx: User', user?.email, 'assigned to', assigned);
+
   if (!assigned || !workingNations.length) {
-    console.log('[ASSIGN] findAssignedPlayerIdx: No assigned player or no working nations, returning -1');
+
     return -1;
   }
   var idx = workingNations.findIndex(function(n) {
     return normalizeName((n.first_name + ' ' + n.surname).trim()) === normalizeName(assigned);
   });
-  console.log('[ASSIGN] findAssignedPlayerIdx: Found index', idx, 'for player', assigned);
+
   return idx;
 }
 
@@ -3357,7 +3357,7 @@ async function joinAllianceGc(allianceName) {
     if (!chatMessagesCache[channelId]) chatMessagesCache[channelId] = [];
     if (typeof renderChatSidebar === 'function') renderChatSidebar();
     if (chatCurrentChannel === channelId && typeof renderChatMessages === 'function') renderChatMessages();
-  } catch(e) { console.warn('[ALLIANCE GC] joinAllianceGc failed', e); }
+  } catch(e) { }
 }
 
 // Remove current user from an alliance GC (sends a system leave message)
@@ -3385,7 +3385,7 @@ async function leaveAllianceGc(allianceName) {
       if (typeof switchChatChannel === 'function') switchChatChannel('global');
     }
     if (typeof renderChatSidebar === 'function') renderChatSidebar();
-  } catch(e) { console.warn('[ALLIANCE GC] leaveAllianceGc failed', e); }
+  } catch(e) { }
 }
 
 // Subscribe to alliance GCs the current player is in (called on login / data load)
@@ -3713,7 +3713,7 @@ async function performInitiateBattleAction() {
       }
       return;
     }
-  } catch(e) { console.warn('[BATTLE] Charge check failed', e); }
+  } catch(e) { }
   var sides = getWarSides(warName);
   var attackerSide = warEntry.side;
   var defenderSide = attackerSide === 0 ? 1 : 0;
@@ -3786,7 +3786,7 @@ async function performInitiateBattleAction() {
       warName: warName,
       rolledBy: _myName || _rollerEmail
     });
-  } catch(e) { console.warn('[BATTLE] Could not write charge', e); }
+  } catch(e) { }
   // ─────────────────────────────
   // ================================================
 
@@ -4181,7 +4181,7 @@ async function loadPlayerRequestsFromFirebase() {
     playerRequests = snap.exists() ? Object.values(snap.val()) : [];
     renderPlayerRequests();
   } catch(e) {
-    console.warn('Could not load requests from Firebase', e);
+
     playerRequests = [];
     renderPlayerRequests();
   }
@@ -4195,7 +4195,7 @@ async function savePlayerRequestsToFirebase() {
     playerRequests.forEach(function(r) { obj[r.id.replace(/\./g,'_')] = r; });
     await window.firebaseSet(reqRef, obj);
   } catch(e) {
-    console.warn('Could not save requests to Firebase', e);
+
   }
 }
 
@@ -4210,7 +4210,7 @@ function subscribePlayerRequests() {
       renderPlayerRequests();
     });
   } catch(e) {
-    console.warn('Could not subscribe to player requests', e);
+
   }
 }
 
@@ -4289,7 +4289,7 @@ async function leaveAllianceAction() {
     refreshAutoDropdowns();
   });
   // Leave the alliance GC
-  try { await leaveAllianceGc(allianceName); } catch(e) { console.warn('[ALLIANCE GC] leave failed', e); }
+  try { await leaveAllianceGc(allianceName); } catch(e) { }
   showToast(playerName + ' has left ' + allianceName + ' and all alliance wars.', 'success');
   renderActionsTab();
 }
@@ -4570,7 +4570,7 @@ async function processAllianceRequest(req) {
     return false;
   }
   // Join the alliance GC
-  try { await joinAllianceGc(allianceName); } catch(e) { console.warn('[ALLIANCE GC] join failed', e); }
+  try { await joinAllianceGc(allianceName); } catch(e) { }
   // Subscribe sidebar to show the GC
   if (typeof subscribeAllianceGcs === 'function') subscribeAllianceGcs();
   return true;
@@ -4715,40 +4715,40 @@ async function firebaseLoginPopup() {
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     const tabName = btn.dataset.tab;
-    console.log(`[TAB SWITCH] User clicked tab button for: ${tabName}`);
+
     
     const authRequired = tabName === 'autoupdate' || tabName === 'data';
     if (authRequired && !window.firebaseAuth.currentUser) {
-      console.log(`[TAB SWITCH] Auth required tab clicked and user not authenticated. Opening login modal...`);
+
       openAdminLoginModal();
       return;
     }
     // Extra guard: admin tab requires the specific admin email
     if (tabName === 'autoupdate' && !isAdminUser()) {
-      console.warn('[TAB SWITCH] Admin tab access denied — not the admin account.');
+
       openAdminLoginModal();
       return;
     }
     if (tabName === 'autoupdate' && isAdminUser()) {
       const email = window.firebaseAuth.currentUser?.email || 'User';
-      console.log(`[TAB SWITCH] User authenticated as ${email}, switching to admin tab.`);
+
       showAdminToast(`Logged in as ${email}`, 'success');
     } else {
-      console.log(`[TAB SWITCH] Switching to regular tab: ${tabName}`);
+
     }
 
-    console.log(`[TAB SWITCH] Removing active class from all buttons and content...`);
+
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     
-    console.log(`[TAB SWITCH] Adding active class to button and content for tab: ${tabName}`);
+
     btn.classList.add('active');
     const contentEl = document.getElementById('tab-' + tabName);
     if (contentEl) {
       contentEl.classList.add('active');
-      console.log(`[TAB SWITCH] ✓ Successfully switched to tab: ${tabName}`);
+
     } else {
-      console.error(`[TAB SWITCH] ✗ Content element not found for tab: tab-${tabName}`);
+
     }
 
     // Actions tab: re-render and subscribe to live Firebase request updates
@@ -4759,7 +4759,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     // History tab: admin-only
     if (tabName === 'history') {
       if (!isAdminUser()) {
-        console.warn('[TAB SWITCH] History tab access denied — admin only.');
+
         openAdminLoginModal();
         return;
       }
@@ -4781,7 +4781,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
           marketplaceOffers = data ? Object.values(data) : [];
           marketplaceOffers.sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
           renderMarketplace();
-        }).catch(function(e){ console.warn('[MKT] refresh on tab enter failed', e); });
+        }).catch(function(e){ });
       }
     }
     // Chat tab
@@ -5022,14 +5022,12 @@ function calculateNationWeeklyIncomes() {
 // Week selector change handler
 document.getElementById('weekSelect').addEventListener('change', function() {
   currentNationSheet = this.value;
-  console.group('Week Change - Data Page');
-  console.log('Selected week sheet:', currentNationSheet);
+
   parseNationSheet(currentNationSheet);
-  console.log('Loaded nationsData count:', nationsData.length);
-  console.log('Sample players:', nationsData.slice(0, 5).map(p => ({ name: (p.first_name + ' ' + p.surname).trim(), nation: p.nation || '<none>' })));
+
+
   parseProvincesForWeek(currentNationSheet);
-  console.log('Loaded provincesData count:', provincesData.length);
-  console.groupEnd();
+
   document.getElementById('nationCount').textContent = nationsData.length;
   document.getElementById('provinceCount').textContent = provincesData.length;
   document.getElementById('nationsSearch').value = '';
@@ -5498,15 +5496,14 @@ function populateDashboard() {
   dashNationsData = nationsData.filter(function(n) { return !isAdminNation(n); });
 
   dashWeek.onchange = function() {
-    console.group('Week Change - Dashboard');
     currentNationSheet = this.value;
-    console.log('Selected dashboard week sheet:', this.value);
+
     parseNationSheet(this.value);
     parseProvincesForWeek(this.value);
     dashNationsData = nationsData.filter(function(n) { return !isAdminNation(n); });
-    console.log('Loaded nationsData count:', nationsData.length, 'provincesData count:', provincesData.length);
-    console.log('Loaded dashNationsData count:', dashNationsData.length);
-    console.log('Sample dashboard players:', dashNationsData.slice(0, 5).map(p => ({ name: (p.first_name + ' ' + p.surname).trim(), nation: p.nation || '<none>' })));
+
+
+
     populatePlayerDropdown();
     populateAllianceDropdown();
     document.getElementById('playerDash').style.display = 'none';
@@ -5517,7 +5514,6 @@ function populateDashboard() {
     if (document.getElementById('allianceSelect').value !== '') {
       renderAllianceDashboard();
     }
-    console.groupEnd();
   };
 
   populatePlayerDropdown();
@@ -6815,7 +6811,7 @@ function addToLog(msg, category) {
   if (window.firebaseDb && window.firebaseRef && window.firebaseSet) {
     var id = 'log_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
     window.firebaseSet(window.firebaseRef(window.firebaseDb, 'gameLog/' + id), entry)
-      .catch(function(e) { console.warn('addToLog Firebase write failed', e); });
+      .catch(function(e) { });
   }
 }
 
@@ -6840,7 +6836,7 @@ function logAction(category, msg, extra) {
   if (window.firebaseDb && window.firebaseRef && window.firebaseSet) {
     var id = 'log_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
     window.firebaseSet(window.firebaseRef(window.firebaseDb, 'gameLog/' + id), entry)
-      .catch(function(e) { console.warn('logAction Firebase write failed', e); });
+      .catch(function(e) { });
   }
 }
 window.logAction = logAction;
@@ -6874,7 +6870,7 @@ function renderChangeLog() {
 function getWN(idx) { return (workingNations[idx].first_name + ' ' + workingNations[idx].surname).trim(); }
 
 function refreshAutoDropdowns() {
-  console.log('[DROPDOWN] refreshAutoDropdowns: Starting refresh', workingNations.length, 'players,', workingProvinces.length, 'provinces');
+
   var playerIdxOpts = '<option value="">— Select —</option>' + workingNations.map(function(n, i) {
     return '<option value="' + i + '">' + esc((n.first_name + ' ' + n.surname).trim()) + '</option>';
   }).join('');
@@ -6897,12 +6893,12 @@ function refreshAutoDropdowns() {
   var startingPlayerEl = document.getElementById('startingProvincePlayer');
   if (startingPlayerEl) {
     var currentValue = startingPlayerEl.value;
-    console.log('[DROPDOWN] refreshAutoDropdowns: Updating startingProvincePlayer, current value:', currentValue);
+
     startingPlayerEl.innerHTML = playerNameOpts;
     startingPlayerEl.selectedIndex = 0;
-    console.log('[DROPDOWN] refreshAutoDropdowns: startingProvincePlayer updated, options count:', startingPlayerEl.options.length, 'selected index:', startingPlayerEl.selectedIndex);
+
   } else {
-    console.log('[DROPDOWN] refreshAutoDropdowns: startingProvincePlayer element not found');
+
   }
 
   var provinceOpts = '<option value="">— Select Province —</option>' + workingProvinces.map(function(p) {
@@ -6916,7 +6912,7 @@ function refreshAutoDropdowns() {
       if (id === 'startingProvinceSelect') el.selectedIndex = -1;
     }
   });
-  console.log('[DROPDOWN] refreshAutoDropdowns: province dropdowns updated, startingProvinceSelect count:', document.getElementById('startingProvinceSelect')?.options.length || 0);
+
 
 
   // War side checkboxes (player rows only — alliance rows added dynamically)
@@ -7249,7 +7245,7 @@ async function removeAllianceUpdate() {
         id: _msgIdDis, channel: _gcIdDis, player: '⚔ System', email: 'system',
         text: 'The alliance "' + _dissolvedName + '" has been dissolved by the admin.', ts: Date.now(), system: true
       });
-    } catch(e) { console.warn('[ALLIANCE GC] dissolve msg failed', e); }
+    } catch(e) { }
   }
 }
 
@@ -7363,7 +7359,7 @@ async function addPlayerToAlliance() {
         text: _playerName2 + ' has joined the alliance.', ts: Date.now(), system: true
       });
     }
-  } catch(e) { console.warn('[ALLIANCE GC] admin add GC msg failed', e); }
+  } catch(e) { }
 }
 
 async function removePlayerFromAlliance() {
@@ -7454,7 +7450,7 @@ async function removePlayerFromAlliance() {
           id: _msgIdRem, channel: _gcIdRem, player: '⚔ System', email: 'system',
           text: _remNamePre + ' has left the alliance.', ts: Date.now(), system: true
         });
-      } catch(e) { console.warn('[ALLIANCE GC] admin remove GC msg failed', e); }
+      } catch(e) { }
     }
   }
 }
@@ -8529,7 +8525,7 @@ function runWeeklyUpdate() {
       showAdminToast(newWeekKey + ' created and saved!', 'success');
     } catch(e) {
       showUploadStatus('Firebase save failed: ' + e.message, 'error');
-      console.error('[WEEKLY] Firebase write failed', e);
+
     }
   })();
 
@@ -8609,7 +8605,7 @@ function exportNewWeek() {
 }
 
 function buildCurrentWorkbookExport() {
-  console.log('[EXPORT] buildCurrentWorkbookExport: start', { workingWeekNum: workingWeekNum, weeklyUpdateRan: weeklyUpdateRan });
+
   
   // Start with a copy of the existing workbook (contains all weeks)
   var wb = XLSX.utils.book_new();
@@ -8619,14 +8615,14 @@ function buildCurrentWorkbookExport() {
 
   // Copy all existing sheets from currentWorkbook
   if (currentWorkbook && currentWorkbook.Sheets) {
-    console.log('[EXPORT] buildCurrentWorkbookExport: copying all weeks from existing workbook');
+
     currentWorkbook.SheetNames.forEach(function(sheetName) {
       var sourceSheet = currentWorkbook.Sheets[sheetName];
       if (!sourceSheet) return;
       
       // For the current week sheets, use the updated working data
       if (sheetName === currentNationSheet) {
-        console.log('[EXPORT] Updating current nation sheet with working data:', sheetName);
+
         // Build updated nation rows from workingNations
         var nHeaders = [];
         NATION_COLS.forEach(function(c) {
@@ -8672,7 +8668,7 @@ function buildCurrentWorkbookExport() {
         });
         XLSX.utils.book_append_sheet(wb, nsWs, sheetName);
       } else if (sheetName === currentProvSheet) {
-        console.log('[EXPORT] Updating current province sheet with working data:', sheetName);
+
         // Build updated province rows from workingProvinces
         var pHeaders = [];
         PROV_COLS.forEach(function(c) {
@@ -8705,7 +8701,7 @@ function buildCurrentWorkbookExport() {
       }
     });
   } else {
-    console.warn('[EXPORT] buildCurrentWorkbookExport: No currentWorkbook found, creating new export with current week only');
+
     // Fallback to old behavior if no workbook loaded
     var newNationSheet = 'Nations (Week ' + exportWeek + ')';
     var newProvSheet = 'Provinces (Week ' + exportWeek + ')';
@@ -8777,20 +8773,20 @@ function buildCurrentWorkbookExport() {
     XLSX.utils.book_append_sheet(wb, psWs, newProvSheet);
   }
 
-  console.log('[EXPORT] buildCurrentWorkbookExport: created workbook with all weeks, SheetNames:', wb.SheetNames);
+
   return wb;
 }
 
 function exportCurrentWorkbook() {
-  console.log('[EXPORT] exportCurrentWorkbook: invoked');
+
   var workbookToExport = buildCurrentWorkbookExport();
   if (!workbookToExport) {
-    console.error('[EXPORT] exportCurrentWorkbook: no workbook built');
+
     overlordAlert('No workbook loaded to export.');
     return;
   }
 
-  console.log('[EXPORT] exportCurrentWorkbook: writing workbook', workbookToExport.SheetNames);
+
   var wbout = XLSX.write(workbookToExport, { bookType: 'xlsx', type: 'array' });
   var blob = new Blob([wbout], { type: 'application/octet-stream' });
   var url = URL.createObjectURL(blob);
@@ -8800,7 +8796,7 @@ function exportCurrentWorkbook() {
   a.download = 'country-game-database-' + timestamp + '.xlsx';
   a.click();
   URL.revokeObjectURL(url);
-  console.log('[EXPORT] exportCurrentWorkbook: download triggered');
+
   addToLog('Exported current workbook database');
   if (window.showAdminToast) showAdminToast('Current workbook exported successfully.', 'success');
 }
@@ -8809,9 +8805,9 @@ window.exportCurrentWorkbook = exportCurrentWorkbook;
 // ── FIREBASE UPLOAD HELPERS ──
 function parseSheetToObjects(sheet, cols) {
   const ref = sheet && sheet['!ref'] ? sheet['!ref'] : 'unknown';
-  console.log('[UPLOAD] parseSheetToObjects: start', { sheetRef: ref, colCount: cols.length });
+
   const raw = XLSX.utils.sheet_to_json(sheet, { header:1, defval:'' });
-  console.log('[UPLOAD] parseSheetToObjects: raw rows', raw.length, 'firstRow', raw[0] || []);
+
   const rows = [];
   for (let r = 1; r < raw.length; r++) {
     const row = raw[r] || [];
@@ -8822,22 +8818,22 @@ function parseSheetToObjects(sheet, cols) {
     });
     rows.push(obj);
   }
-  console.log('[UPLOAD] parseSheetToObjects: parsed rows', rows.length, 'example', rows[0] || null);
+
   return rows;
 }
 
 function syncWorkingDataToSheets() {
-  console.log('[SYNC] syncWorkingDataToSheets: start', { currentWorkbook: !!currentWorkbook, currentNationSheet: currentNationSheet, workingNations: workingNations.length, workingProvinces: workingProvinces.length });
+
   // Update the Excel sheets with the current working data
   if (!currentWorkbook || !currentNationSheet) {
-    console.warn('[SYNC] syncWorkingDataToSheets: missing currentWorkbook or currentNationSheet');
+
     return;
   }
 
   // SAFETY: if workingProvinces is empty but provincesData has content, restore from provincesData
   // This prevents a player action (which doesn't use the admin tab) from wiping provinces
   if (workingProvinces.length === 0 && provincesData.length > 0) {
-    console.warn('[SYNC] syncWorkingDataToSheets: workingProvinces was empty, restoring from provincesData (' + provincesData.length + ' rows)');
+
     workingProvinces = provincesData.map(function(p) {
       var clone = {};
       PROV_COLS.forEach(function(c) { clone[c.key] = p[c.key] || ''; });
@@ -8871,7 +8867,7 @@ function syncWorkingDataToSheets() {
     nRows.push(row);
   });
   currentWorkbook.Sheets[currentNationSheet] = XLSX.utils.aoa_to_sheet(nRows);
-  console.log('[SYNC] syncWorkingDataToSheets: updated nation sheet', currentNationSheet, 'rows', nRows.length);
+
 
   // Update current province sheet — only if we have provinces to write
   var weekLabel = currentNationSheet.match(/\(([^)]+)\)/) ? currentNationSheet.match(/\(([^)]+)\)/)[1] : 'Week 0';
@@ -8899,22 +8895,22 @@ function syncWorkingDataToSheets() {
       pRows.push(row);
     });
     currentWorkbook.Sheets[provSheetName] = XLSX.utils.aoa_to_sheet(pRows);
-    console.log('[SYNC] syncWorkingDataToSheets: updated province sheet', provSheetName, 'rows', pRows.length);
+
   } else {
     // No provinces in memory — do NOT overwrite the sheet, just leave it as-is
-    console.warn('[SYNC] syncWorkingDataToSheets: workingProvinces is still empty, skipping province sheet update to prevent data loss');
+
   }
 
   // Save sea crossings for current week
   var currentWeekKey = weekLabel;
   seaCrossingsData[currentWeekKey] = workingSeaCrossings.slice();
-  console.log('[SYNC] syncWorkingDataToSheets: saved sea crossings for', currentWeekKey, workingSeaCrossings.length, 'crossings');
+
 }
 
 function buildFirebaseWeeksPayload() {
-  console.log('[UPLOAD] buildFirebaseWeeksPayload: start', { currentWorkbook: !!currentWorkbook, nationSheetNames: nationSheetNames ? nationSheetNames.length : 0, provinceSheetNames: provinceSheetNames ? provinceSheetNames.length : 0 });
+
   if (!currentWorkbook || !nationSheetNames || !nationSheetNames.length) {
-    console.warn('[UPLOAD] buildFirebaseWeeksPayload: missing workbook or sheet names');
+
     return null;
   }
   const payload = {};
@@ -8923,7 +8919,7 @@ function buildFirebaseWeeksPayload() {
 
   // First, sync working data to sheets for the current week
   syncWorkingDataToSheets();
-  console.log('[UPLOAD] buildFirebaseWeeksPayload: after syncWorkingDataToSheets');
+
 
   nationSheetNames.forEach(function(nationSheet) {
     const weekMatch = nationSheet.match(/\(([^)]+)\)/);
@@ -8933,21 +8929,21 @@ function buildFirebaseWeeksPayload() {
       return pm && pm[1] === weekKey;
     });
 
-    console.log('[UPLOAD] buildFirebaseWeeksPayload: processing week', weekKey, { nationSheet: nationSheet, provinceSheet: provinceSheet });
+
     const nations = currentWorkbook.Sheets[nationSheet] ? parseSheetToObjects(currentWorkbook.Sheets[nationSheet], NATION_COLS) : [];
     const rawProvinces = provinceSheet && currentWorkbook.Sheets[provinceSheet] ? parseSheetToObjects(currentWorkbook.Sheets[provinceSheet], PROV_COLS) : [];
     // Safety: if the province sheet parsed as empty but workingProvinces has data,
     // use workingProvinces (or provincesData) to prevent a wipe
     var provinces = rawProvinces;
     if (!provinces.length && workingProvinces.length > 0) {
-      console.warn('[UPLOAD] Province sheet parsed empty for', weekKey, '— using workingProvinces instead');
+
       provinces = workingProvinces.map(function(pr) {
         var obj = {};
         PROV_COLS.forEach(function(c) { obj[c.key] = pr[c.key] || ''; });
         return obj;
       });
     } else if (!provinces.length && provincesData.length > 0) {
-      console.warn('[UPLOAD] Province sheet parsed empty for', weekKey, '— using provincesData instead');
+
       provinces = provincesData.map(function(pr) {
         var obj = {};
         PROV_COLS.forEach(function(c) { obj[c.key] = pr[c.key] || ''; });
@@ -8963,56 +8959,56 @@ function buildFirebaseWeeksPayload() {
 
     totalNations += nations.length;
     totalProvinces += provinces.length;
-    console.log('[UPLOAD] buildFirebaseWeeksPayload: collected week', weekKey, { nations: nations.length, provinces: provinces.length });
+
   });
 
-  console.log('[UPLOAD] buildFirebaseWeeksPayload: completed', { totalNations: totalNations, totalProvinces: totalProvinces, weekCount: Object.keys(payload).length });
+
   return { payload: payload, totalNations: totalNations, totalProvinces: totalProvinces };
 }
 
 // ── IMPORT EXCEL TO FIREBASE ──
 function importExcelToFirebase() {
-  console.log('[UPLOAD] importExcelToFirebase: invoked');
-  console.log('[UPLOAD] importExcelToFirebase: currentWorkbook', !!currentWorkbook, 'nationSheetNames', nationSheetNames ? nationSheetNames.length : 0, 'currentNationSheet', currentNationSheet);
+
+
   // Upload the full workbook state to Firebase after wiping existing weeks.
   if (!currentWorkbook || !nationSheetNames || !nationSheetNames.length) {
-    console.error('[UPLOAD] importExcelToFirebase: missing workbook or sheets');
+
     overlordAlert('No workbook data available to upload. Load or build the data first.');
     return;
   }
 
   const uploadData = buildFirebaseWeeksPayload();
-  console.log('[UPLOAD] importExcelToFirebase: uploadData', uploadData ? { weeks: Object.keys(uploadData.payload || {}).length, totalNations: uploadData.totalNations, totalProvinces: uploadData.totalProvinces } : null);
+
   if (!uploadData || !Object.keys(uploadData.payload).length) {
-    console.error('[UPLOAD] importExcelToFirebase: no weeks found in payload');
+
     overlordAlert('No weeks found in the current workbook to upload.');
     return;
   }
 
   const weekCount = Object.keys(uploadData.payload).length;
-  console.log('[UPLOAD] importExcelToFirebase: confirm upload', { weekCount: weekCount, totalNations: uploadData.totalNations, totalProvinces: uploadData.totalProvinces });
+
   if (!confirm('This will wipe the Firebase weeks data and upload all ' + weekCount + ' weeks from the current workbook.\nTotal nations: ' + uploadData.totalNations + ', total provinces: ' + uploadData.totalProvinces + '\nContinue?')) {
-    console.log('[UPLOAD] importExcelToFirebase: user cancelled upload');
+
     return;
   }
 
   try {
     const weeksRef = window.firebaseRef(window.firebaseDb, 'weeks');
-    console.log('[UPLOAD] importExcelToFirebase: clearing Firebase weeks');
+
     // Clear existing weeks data first
     window.firebaseSet(weeksRef, null).then(function() {
-      console.log('[UPLOAD] importExcelToFirebase: cleared Firebase weeks, now uploading payload');
+
       return window.firebaseSet(weeksRef, uploadData.payload);
     }).then(function() {
-      console.log('[UPLOAD] importExcelToFirebase: upload complete');
+
       showAdminToast('Firebase cleared and uploaded ' + weekCount + ' weeks successfully.', 'success');
       addToLog('Cleared /weeks and uploaded full workbook state: ' + weekCount + ' weeks, ' + uploadData.totalNations + ' nations, ' + uploadData.totalProvinces + ' provinces');
     }).catch(function(error) {
-      console.error('[UPLOAD] importExcelToFirebase: Firebase full upload error', error);
+
       overlordAlert('Error uploading full workbook to Firebase: ' + error.message);
     });
   } catch (error) {
-    console.error('[UPLOAD] importExcelToFirebase: upload caught exception', error);
+
     overlordAlert('Error uploading to Firebase: ' + error.message);
   }
 }
@@ -71721,7 +71717,7 @@ function hashNameToColor(name) {
         if (normalizeName(k) === n) return window.registeredUserColors[k];
       }
     }
-  } catch(e) { console.warn('hashNameToColor lookup failed', e); }
+  } catch(e) { }
   var h = 0;
   for (var i = 0; i < name.length; i++) { h = Math.imul(31, h) + name.charCodeAt(i) | 0; }
   return PLAYER_COLORS[Math.abs(h) % PLAYER_COLORS.length];
@@ -71885,13 +71881,13 @@ async function activateFogClear() {
   if (_sandboxMode) {
     // Sandbox: apply effect locally only, no Firebase writes, no workbook upload
     _fogClearExpiry = expiry;
-    console.log('[SANDBOX] Fog of war cleared locally until', new Date(expiry).toLocaleString());
+
     showAdminToast('🧪 Sandbox: Fog cleared locally for 24h (not saved to Firebase)', 'success');
     if (typeof renderMap === 'function') renderMap();
     if (typeof renderEspionageTab === 'function') renderEspionageTab();
   } else {
     logAction('espionage', 'Fog of War cleared for 24h — ' + cost + ' ECO spent', { ecoSpent: cost });
-    try { await uploadWorkbookToFirebase(); } catch(e) { console.warn('[FOG CLEAR] Could not sync ECO:', e); }
+    try { await uploadWorkbookToFirebase(); } catch(e) { }
     // Write expiry to Firebase — onValue listener will update _fogClearExpiry and re-render
     var key = user.email.replace(/\./g, ',');
     var ref = window.firebaseRef(window.firebaseDb, 'fogClear/' + key);
@@ -71988,7 +71984,7 @@ function getFogVisibleNations() {
 }
 
 function renderMap() {
-  console.log('renderMap()', { mode: document.getElementById('mapColorMode')?.value, week: document.getElementById('mapWeekSelect')?.value, highlight: window._mapHighlight });
+
   if (!mapSvgEl) return;
   var mode = document.getElementById('mapColorMode').value;
   var weekSheet = document.getElementById('mapWeekSelect').value;
@@ -72410,38 +72406,38 @@ function getProvinceEdgePoint(provNum, targetPoint) {
 function renderSeaCrossingArrows(weekSheet) {
   var mapSvgEl = document.querySelector('#mapContainer svg');
   if (!mapSvgEl) return;
-  console.log("--- Starting renderSeaCrossingArrows ---");
-  console.log("Input weekSheet:", weekSheet);
+
+
 
   // 1. Check for existing arrows
   var existingArrows = mapSvgEl.querySelectorAll('.sea-crossing-arrow');
-  console.log("Found and removing " + existingArrows.length + " old arrows.");
+
   existingArrows.forEach(function(arrow) { arrow.remove(); });
 
   // 2. Extract week name
   var weekMatch = weekSheet.match(/\(([^)]+)\)/);
   if (!weekMatch) {
-    console.error("DEBUG: Regex failed! The sheet name doesn't have parentheses like '(Week 1)'. Received:", weekSheet);
+
     return;
   }
   var weekName = weekMatch[1];
-  console.log("DEBUG: Extracted weekName:", weekName);
+
 
   // 3. Check for data
   var crossings = seaCrossingsData[weekName] || [];
   if (!crossings.length) {
-    console.warn("DEBUG: No crossings found in 'seaCrossingsData' for key:", weekName);
-    console.log("Available keys in seaCrossingsData:", Object.keys(seaCrossingsData));
+
+
     return;
   }
-  console.log("DEBUG: Found " + crossings.length + " crossings to render.");
+
 
   crossings.forEach(function(crossing, index) {
     var prov1 = parseInt(crossing.prov1);
     var prov2 = parseInt(crossing.prov2);
     
     if (isNaN(prov1) || isNaN(prov2)) {
-      console.error("DEBUG: Crossing index " + index + " has invalid Province IDs:", crossing.prov1, crossing.prov2);
+
       return;
     }
 
@@ -72449,14 +72445,14 @@ function renderSeaCrossingArrows(weekSheet) {
     var center1 = getProvinceCenter(prov1);
     var center2 = getProvinceCenter(prov2);
     if (!center1 || !center2) {
-      console.error("DEBUG: Could not find centers for Prov " + prov1 + " or " + prov2 + ". Check getProvinceCenter().");
+
       return;
     }
 
     var start = getProvinceEdgePoint(prov1, center2);
     var end = getProvinceEdgePoint(prov2, center1);
     if (!start || !end) {
-      console.error("DEBUG: Could not find edge points for Prov " + prov1 + " or " + prov2);
+
       return;
     }
 
@@ -72466,7 +72462,7 @@ function renderSeaCrossingArrows(weekSheet) {
     var length = Math.sqrt(dx * dx + dy * dy);
     
     if (length === 0) {
-      console.warn("DEBUG: Distance between points is 0 for crossing index " + index);
+
       return;
     }
 
@@ -72517,10 +72513,10 @@ function renderSeaCrossingArrows(weekSheet) {
     mapSvgEl.appendChild(arrow1);
     mapSvgEl.appendChild(arrow2);
     
-    console.log("SUCCESS: Rendered arrow between " + prov1 + " and " + prov2);
+
   });
 
-  console.log("--- renderSeaCrossingArrows Complete ---");
+
 }
 
 function getProvinceEdgePoint(provNum, targetPoint) {
@@ -72577,7 +72573,7 @@ function getProvinceShapePoints(provNum) {
 }
 
 function mapToggleHighlight(name) {
-  console.log('mapToggleHighlight()', name, 'prev', window._mapHighlight);
+
   window._mapHighlight = (window._mapHighlight === name) ? null : name;
   renderMap();
 }
@@ -72589,7 +72585,7 @@ function clearMapHighlightClasses() {
 }
 
 function applyMapHighlightClasses() {
-  console.log('applyMapHighlightClasses()', { highlight: window._mapHighlight, mode: window._mapCurrentMode || document.getElementById('mapColorMode')?.value });
+
   clearMapHighlightClasses();
   if (!mapSvgEl) return;
   var highlighted = window._mapHighlight;
@@ -72821,7 +72817,7 @@ document.getElementById('fileInput').addEventListener('change', function(e) {
       
     } catch (error) {
       showError('Error reading Excel file: ' + error.message);
-      console.error('File read error:', error);
+
     }
   };
   
@@ -72853,18 +72849,18 @@ function loadSvgContent(svgContent) {
 }
 
 function tryAutoloadSvg() {
-  console.log('[MAP] Fetching static SVG from:', MAP_SVG_PATH);
+
   fetch(MAP_SVG_PATH)
     .then(function(res) {
       if (!res.ok) throw new Error('HTTP ' + res.status + ' fetching ' + MAP_SVG_PATH);
       return res.text();
     })
     .then(function(svgContent) {
-      console.log('[MAP] Static SVG loaded successfully.');
+
       loadSvgContent(svgContent);
     })
     .catch(function(err) {
-      console.warn('[MAP] Could not load static SVG:', err.message);
+
       var uploadArea = document.getElementById('mapSvgUpload');
       if (uploadArea) uploadArea.style.display = 'block';
     });
@@ -72888,7 +72884,7 @@ function handleMapSvgFileInput(input) {
     }
     loadSvgContent(svgContent);
     showAdminToast('Map loaded: ' + file.name, 'success');
-    console.log('[MAP] SVG loaded from file input:', file.name);
+
   };
   reader.onerror = function() {
     showAdminToast('Failed to read SVG file.', 'error');
@@ -72997,7 +72993,7 @@ function getPlayerOwnership(province, playerName) {
 
     return false;
   });
-  if (match) console.log('Province #' + province.number + ': ' + playerName + ' = ' + match.percent + '%');
+  if (match)
   return match ? match.percent : 0;
 }
 
@@ -73016,7 +73012,7 @@ function getPlayerOwnedProvinces(provincesData, player) {
   if (hasOwnershipData) return [];
 
   // Method 2: fallback to province numbers from Nations sheet only when no ownership fields exist
-  console.log('Ownership matching found 0 provinces for "' + playerName + '", falling back to province numbers');
+
   const provNums = new Set(
     (player.provinces || '').split(/[,;\s]+/).map(s => {
       const n = parseFloat(s.trim());
@@ -73111,7 +73107,7 @@ function subscribeHistoryLog() {
       }
     );
   } catch(e) {
-    console.warn('subscribeHistoryLog failed', e);
+
     if (el) el.innerHTML = '<div style="color:var(--color-text-tertiary);padding:40px;text-align:center;">Could not load history.</div>';
   }
 }
@@ -73291,7 +73287,7 @@ function stringToColor(str) {
         if (normalizeName(k) === n) return window.registeredUserColors[k];
       }
     }
-  } catch(e) { console.warn('stringToColor lookup failed', e); }
+  } catch(e) { }
   var hash = 0;
   for (var i = 0; i < str.length; i++) { hash = str.charCodeAt(i) + ((hash << 5) - hash); }
   var colours = ['#f87171','#fb923c','#fbbf24','#4ade80','#34d399','#60a5fa','#a78bfa','#f472b6','#e879f9','#2dd4bf'];
@@ -73350,18 +73346,17 @@ async function startEspImpersonation(targetPlayerName) {
   if (!isAdminUser()) {
     var p = workingNations[myIdx];
     var eco = parseFloat(p.econ) || 0;
-    var myCenterCount = countMyEspionageCenters();
-    var cost = Math.max(1, 6 - myCenterCount);
-    if (eco < cost) {
-      overlordAlert('Not enough ECO. You need ' + cost + ' ECO for impersonation. You have ' + eco.toFixed(1) + '.');
+    var impersonateCost = 10;
+    if (eco < impersonateCost) {
+      overlordAlert('Not enough ECO. You need ' + impersonateCost + ' ECO for impersonation. You have ' + eco.toFixed(1) + '.');
       return;
     }
-    if (!confirm('Spend ' + cost + ' ECO to impersonate ' + targetPlayerName + ' for 30 seconds?\n\nYou can view their map and chat as them. Actions are disabled.')) return;
-    p.econ = String(Math.round((eco - cost) * 100) / 100);
+    if (!confirm('Spend ' + impersonateCost + ' ECO to impersonate ' + targetPlayerName + ' for 30 seconds?\n\nYou can view their map and chat as them. Actions are disabled.')) return;
+    p.econ = String(Math.round((eco - impersonateCost) * 100) / 100);
     syncWorkingDataToSheets();
-    logAction('espionage', 'Impersonation of ' + targetPlayerName + ' for 30s — ' + cost + ' ECO spent', { ecoSpent: cost, target: targetPlayerName });
+    logAction('espionage', 'Impersonation of ' + targetPlayerName + ' for 30s — ' + impersonateCost + ' ECO spent', { ecoSpent: impersonateCost, target: targetPlayerName });
     if (!_sandboxMode) {
-      try { await uploadWorkbookToFirebase(); } catch(e) { console.warn('[ESP IMP] Could not sync ECO:', e); }
+      try { await uploadWorkbookToFirebase(); } catch(e) {}
     }
   } else {
     if (!confirm('Impersonate ' + targetPlayerName + ' for 30 seconds? (Admin — no ECO cost)')) return;
@@ -73390,7 +73385,7 @@ async function startEspImpersonation(targetPlayerName) {
     });
   }
 
-  console.log('[ESP IMP] Target:', targetPlayerName, '| email:', targetEmail);
+
 
   _espImp = {
     playerName: targetPlayerName,
@@ -73457,7 +73452,7 @@ async function loadGameStartDate() {
     }
     _updateGameStartStatus();
     renderActionsTab();
-  } catch(e) { console.warn('[GAME START] loadGameStartDate failed', e); }
+  } catch(e) { }
 }
 window.loadGameStartDate = loadGameStartDate;
 
@@ -73538,7 +73533,7 @@ function subscribeGameStartDate() {
       _updateGameStartStatus();
       renderActionsTab();
     });
-  } catch(e) { console.warn('[GAME START] subscribeGameStartDate failed', e); }
+  } catch(e) { }
 }
 
 // Start a 1-second ticker that keeps the admin panel status + the actions lockout fresh
@@ -73590,7 +73585,7 @@ async function checkAndRunAutomaticUpdates() {
 
   // ── Skip updates until the game start date ──
   if (!isGameStarted()) {
-    console.log('[AUTO UPDATE] Game has not started yet — skipping automatic updates.');
+
     return;
   }
 
@@ -73609,11 +73604,11 @@ async function checkAndRunAutomaticUpdates() {
     var snap = await window.firebaseGet(flagRef);
 
     if (snap.exists() && snap.val().ran === true) {
-      console.log('[AUTO UPDATE] Daily update already ran for', todayKey, '— skipping.');
+
       return;
     }
 
-    console.log('[AUTO UPDATE] Running automatic daily update for', todayKey);
+
 
     // Run inside performActionWithRefresh so it syncs to Firebase properly
     await performActionWithRefresh('Automatic daily update', function() {
@@ -73850,7 +73845,7 @@ async function checkAndRunAutomaticUpdates() {
       // Also write to Firebase gameLog directly (bypassing normal addToLog to keep the bot attribution)
       if (window.firebaseDb && window.firebaseSet) {
         window.firebaseSet(window.firebaseRef(window.firebaseDb, 'gameLog/' + logEntry.id), logEntry)
-          .catch(function(e) { console.warn('Auto-update log Firebase write failed', e); });
+          .catch(function(e) { });
       }
     });
 
@@ -73864,11 +73859,11 @@ async function checkAndRunAutomaticUpdates() {
       ts: Date.now()
     });
 
-    console.log('[AUTO UPDATE] Done. Monday:', isMonday);
+
     showToast((isMonday ? 'Daily + Weekly' : 'Daily') + ' update ran automatically for ' + todayKey, 'success');
 
   } catch(e) {
-    console.error('[AUTO UPDATE] Failed:', e);
+
   }
 }
 
@@ -73892,7 +73887,7 @@ async function saveBattleResultToFirebase(resultObj) {
     updateBattlesBadge();
     return key;
   } catch(e) {
-    console.warn('Could not save battle result to Firebase', e);
+
   }
 }
 
@@ -73907,7 +73902,7 @@ function subscribeBattleResults() {
       updateBattlesBadge();
     });
   } catch(e) {
-    console.warn('Could not subscribe to battle results', e);
+
   }
 }
 
@@ -73941,7 +73936,7 @@ async function markBattleResultSeen(brId) {
     var db = window.firebaseDb;
     var seenRef = window.firebaseRef(db, 'battleResults/' + brId + '/seenBy/' + emailKey);
     await window.firebaseSet(seenRef, true);
-  } catch(e) { console.warn('Could not mark battle seen', e); }
+  } catch(e) { }
 }
 
 async function claimBattleProvinces(brId) {
@@ -74027,7 +74022,7 @@ async function claimBattleProvinces(brId) {
     var db = window.firebaseDb;
     await window.firebaseSet(window.firebaseRef(db, 'battleResults/' + brId + '/claimedProvinces'), transfers);
     await window.firebaseSet(window.firebaseRef(db, 'battleResults/' + brId + '/claimed'), true);
-  } catch(e) { console.warn('Could not update claimed state', e); }
+  } catch(e) { }
 
   showToast('Provinces claimed and saved!', 'success');
   renderBattlesTab();
@@ -74633,11 +74628,11 @@ function subscribeMarketplace() {
       marketplaceOffers.sort(function(a,b) { return (b.createdAt||0)-(a.createdAt||0); });
       renderMarketplace();
     });
-  } catch(e) { console.warn('subscribeMarketplace failed', e); }
+  } catch(e) { }
 }
 
 async function postMarketplaceOffer() {
-  console.log('[MKT] postMarketplaceOffer called');
+
   var user = window.firebaseAuth && window.firebaseAuth.currentUser;
   if (!user) { overlordAlert('Log in first.'); return; }
   var idx = findAssignedPlayerIdx();
@@ -74652,7 +74647,7 @@ async function postMarketplaceOffer() {
   var r2r = document.getElementById('mktGetResource2').value;
   var r2a = parseFloat(document.getElementById('mktGetAmount2').value) || 0;
 
-  console.log('[MKT] Offer inputs — give:', g1r, g1a, g2r, g2a, '| want:', r1r, r1a, r2r, r2a);
+
   if (!r1r || r1a <= 0) { overlordAlert('Enter a valid amount for the first "I Want" resource.'); return; }
 
   // ── Amount limits: min 0.1, max 50 ──
@@ -74716,7 +74711,7 @@ async function postMarketplaceOffer() {
   try {
     var db = window.firebaseDb;
     await window.firebaseSet(window.firebaseRef(db, 'marketplace/' + offer.id), offer);
-    console.log('[MKT] Offer posted to Firebase:', offer.id);
+
     showToast('Offer posted to marketplace!', 'success');
     // Clear amount fields
     document.getElementById('mktGiveAmount1').value = '';
@@ -74729,31 +74724,31 @@ async function postMarketplaceOffer() {
 }
 
 async function cancelMarketplaceOffer(offerId) {
-  console.log('[MKT] cancelMarketplaceOffer called for:', offerId);
+
   try {
     var db = window.firebaseDb;
     await window.firebaseSet(window.firebaseRef(db, 'marketplace/' + offerId), null);
-    console.log('[MKT] Offer', offerId, 'removed from Firebase');
+
     showToast('Offer removed.', 'success');
   } catch(e) {
-    console.error('[MKT] Failed to remove offer:', e);
+
     overlordAlert('Failed to remove offer: ' + e.message);
   }
 }
 
 async function acceptMarketplaceOffer(offerId) {
-  console.log('[MKT] acceptMarketplaceOffer called for offer:', offerId);
+
 
   var user = window.firebaseAuth && window.firebaseAuth.currentUser;
   if (!user) { overlordAlert('Log in first.'); return; }
 
   var myIdx = findAssignedPlayerIdx();
   if (myIdx < 0) { overlordAlert('No player assigned to your account.'); return; }
-  console.log('[MKT] Accepter playerIdx:', myIdx, '— name:', getWN(myIdx));
+
 
   var offer = marketplaceOffers.find(function(o) { return o.id === offerId; });
   if (!offer || offer.status !== 'open') { overlordAlert('This offer is no longer available.'); return; }
-  console.log('[MKT] Offer found:', JSON.stringify(offer));
+
 
   var myEmail = user.email.toLowerCase();
   if (offer.fromEmail === myEmail) { overlordAlert('You cannot accept your own offer.'); return; }
@@ -74763,11 +74758,11 @@ async function acceptMarketplaceOffer(offerId) {
     return normalizeName((n.first_name + ' ' + n.surname).trim()) === normalizeName(offer.fromPlayer);
   });
   if (offerIdxBefore < 0) {
-    console.error('[MKT] Offering player not found in workingNations. fromPlayer:', offer.fromPlayer);
+
     overlordAlert('The offering player was not found in game data.');
     return;
   }
-  console.log('[MKT] Offerer found at index', offerIdxBefore, 'before refresh');
+
 
   // ── The critical fix ──
   // performActionWithRefresh calls refreshFirebaseOnce() which REPLACES the workingNations
@@ -74775,7 +74770,7 @@ async function acceptMarketplaceOffer(offerId) {
   // We must look up offerer/accepter INSIDE the action function, after the refresh.
 
   await performActionWithRefresh('Marketplace trade', async function() {
-    console.log('[MKT] Inside action function — workingNations now has', workingNations.length, 'entries');
+
 
     // Re-find both players in the FRESHLY LOADED workingNations
     var freshMyIdx = workingNations.findIndex(function(n) {
@@ -74785,15 +74780,15 @@ async function acceptMarketplaceOffer(offerId) {
       return normalizeName((n.first_name + ' ' + n.surname).trim()) === normalizeName(offer.fromPlayer);
     });
 
-    console.log('[MKT] Fresh accepter idx:', freshMyIdx, '— fresh offerer idx:', freshOfferIdx);
+
 
     if (freshMyIdx < 0) {
-      console.error('[MKT] Accepter not found in refreshed workingNations!');
+
       overlordAlert('Your player was not found after data refresh.');
       return false;
     }
     if (freshOfferIdx < 0) {
-      console.error('[MKT] Offerer not found in refreshed workingNations!');
+
       overlordAlert('The offering player was not found after data refresh.');
       return false;
     }
@@ -74840,8 +74835,8 @@ async function acceptMarketplaceOffer(offerId) {
     var offerer = workingNations[freshOfferIdx];
     var accepter = workingNations[freshMyIdx];
 
-    console.log('[MKT] Offerer stats before trade — econ:', offerer.econ, 'military:', offerer.military, 'food:', offerer.food, 'defence:', offerer.defence, 'happiness:', offerer.happiness, 'stability:', offerer.stability);
-    console.log('[MKT] Accepter stats before trade — econ:', accepter.econ, 'military:', accepter.military, 'food:', accepter.food, 'defence:', accepter.defence, 'happiness:', accepter.happiness, 'stability:', accepter.stability);
+
+
 
     function getStatKey(resource) {
       return resource === 'econ' ? 'econ' : resource;
@@ -74858,19 +74853,19 @@ async function acceptMarketplaceOffer(offerId) {
 
     // Validate after refresh (values may have changed)
     if (getStatVal(offerer, offer.give1Resource) < offer.give1Amount) {
-      console.warn('[MKT] Offerer now lacks', offer.give1Resource, '— has:', getStatVal(offerer, offer.give1Resource), 'needs:', offer.give1Amount);
+
       overlordAlert('The offering player no longer has enough ' + mktLabel(offer.give1Resource) + '.'); return false;
     }
     if (offer.give2Resource && offer.give2Amount > 0 && getStatVal(offerer, offer.give2Resource) < offer.give2Amount) {
-      console.warn('[MKT] Offerer now lacks secondary give resource', offer.give2Resource);
+
       overlordAlert('The offering player no longer has enough ' + mktLabel(offer.give2Resource) + '.'); return false;
     }
     if (getStatVal(accepter, offer.get1Resource) < offer.get1Amount) {
-      console.warn('[MKT] Accepter lacks', offer.get1Resource, '— has:', getStatVal(accepter, offer.get1Resource), 'needs:', offer.get1Amount);
+
       overlordAlert('You don\'t have enough ' + mktLabel(offer.get1Resource) + ' to accept this offer.'); return false;
     }
     if (offer.get2Resource && offer.get2Amount > 0 && getStatVal(accepter, offer.get2Resource) < offer.get2Amount) {
-      console.warn('[MKT] Accepter lacks secondary get resource', offer.get2Resource);
+
       overlordAlert('You don\'t have enough ' + mktLabel(offer.get2Resource) + ' to accept this offer.'); return false;
     }
 
@@ -74899,36 +74894,36 @@ async function acceptMarketplaceOffer(offerId) {
       } else {
         newTo = Math.round((tRaw + amount) * 100) / 100;
       }
-      console.log('[MKT] transferStat:', resource, '| from', fRaw, '->', newFrom, '| to', tRaw, '->', newTo, '| fIsDecimal:', fIsDecimal, 'tIsDecimal:', tIsDecimal);
+
       from[key] = String(newFrom);
       to[key] = String(newTo);
     }
 
     // Offerer gives → Accepter receives
-    console.log('[MKT] Transferring give1:', offer.give1Resource, offer.give1Amount, 'from offerer to accepter');
+
     transferStat(offerer, accepter, offer.give1Resource, offer.give1Amount);
     if (offer.give2Resource && offer.give2Amount > 0) {
-      console.log('[MKT] Transferring give2:', offer.give2Resource, offer.give2Amount, 'from offerer to accepter');
+
       transferStat(offerer, accepter, offer.give2Resource, offer.give2Amount);
     }
 
     // Accepter gives → Offerer receives (what offerer wanted)
-    console.log('[MKT] Transferring get1:', offer.get1Resource, offer.get1Amount, 'from accepter to offerer');
+
     transferStat(accepter, offerer, offer.get1Resource, offer.get1Amount);
     if (offer.get2Resource && offer.get2Amount > 0) {
-      console.log('[MKT] Transferring get2:', offer.get2Resource, offer.get2Amount, 'from accepter to offerer');
+
       transferStat(accepter, offerer, offer.get2Resource, offer.get2Amount);
     }
 
-    console.log('[MKT] Offerer stats AFTER trade — econ:', offerer.econ, 'military:', offerer.military, 'food:', offerer.food);
-    console.log('[MKT] Accepter stats AFTER trade — econ:', accepter.econ, 'military:', accepter.military, 'food:', accepter.food);
+
+
 
     addToLog('Marketplace trade: ' + offer.fromPlayer + ' ↔ ' + getWN(freshMyIdx) + ' — ' + buildMktOfferLogText(offer));
     refreshAutoDropdowns();
-    console.log('[MKT] Action function complete — trade applied to workingNations');
+
   });
 
-  console.log('[MKT] performActionWithRefresh finished — removing offer from Firebase');
+
 
   // Archive the completed offer to marketplaceHistory for economics tracking
   try {
@@ -74939,18 +74934,18 @@ async function acceptMarketplaceOffer(offerId) {
       accepterPlayer: getWN(myIdx)
     });
     await window.firebaseSet(window.firebaseRef(db, 'marketplaceHistory/' + offer.id), historyRecord);
-    console.log('[MKT] Offer', offer.id, 'archived to marketplaceHistory');
+
   } catch(e) {
-    console.warn('[MKT] Could not archive offer to marketplaceHistory:', e);
+
   }
 
   // Delete the offer from Firebase now the trade is done
   try {
     var db = window.firebaseDb;
     await window.firebaseSet(window.firebaseRef(db, 'marketplace/' + offerId), null);
-    console.log('[MKT] Offer', offerId, 'deleted from Firebase');
+
   } catch(e) {
-    console.warn('[MKT] Could not delete marketplace offer from Firebase:', e);
+
   }
 
   showToast('Trade completed!', 'success');
@@ -75225,7 +75220,7 @@ async function getMktWeeklyBought(playerName, resource) {
     });
     return total;
   } catch(e) {
-    console.warn('[MKT] getMktWeeklyBought failed:', e);
+
     return 0;
   }
 }
@@ -75366,7 +75361,7 @@ async function renderEcoRates() {
       completedOffers = Object.values(snap.val());
     }
   } catch(e) {
-    console.warn('[MKT] Could not load marketplaceHistory for economics:', e);
+
   }
 
   var result = computeEcoConversionRates(completedOffers);
@@ -75492,7 +75487,7 @@ async function ecoConvertQuick(toResource, rate) {
       createdAt: Date.now()
     };
     await window.firebaseSet(window.firebaseRef(window.firebaseDb, 'marketplaceHistory/' + convRecord.id), convRecord);
-  } catch(e) { console.warn('[MKT] Could not archive ecoConvert to marketplaceHistory:', e); }
+  } catch(e) { }
   if (typeof renderActionsTab === 'function') renderActionsTab();
   showToast('Converted ' + ecoAmt + ' Eco → ' + gain + ' ' + meta.label, 'success');
 }
@@ -75695,6 +75690,73 @@ window.ecoConvertQuick = ecoConvertQuick;
       </div>
     </div>
 
+    <!-- ── Espionage ── -->
+    <div style="background:var(--color-background-secondary);border:1px solid var(--color-border-primary);border-radius:var(--border-radius-lg);overflow:hidden;margin-bottom:16px;">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--color-border-secondary);display:flex;align-items:center;gap:10px;background:rgba(139,92,246,0.06);">
+        <span style="font-size:20px;">🕵️</span>
+        <span style="font-size:14px;font-weight:700;color:#a78bfa;text-transform:uppercase;letter-spacing:0.7px;">Espionage</span>
+      </div>
+      <div style="padding:20px;display:grid;gap:12px;">
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <span style="font-size:16px;flex-shrink:0;margin-top:1px;">🔍</span>
+          <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.65;">
+            <strong style="color:var(--color-text-primary);">What is espionage?</strong> Espionage allows players to perform various covert actions related to gathering intelligence — things normal diplomacy can't give you. It's about knowing more than your enemies do.
+          </div>
+        </div>
+        <div style="height:1px;background:var(--color-border-secondary);"></div>
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <span style="font-size:16px;flex-shrink:0;margin-top:1px;">🏛️</span>
+          <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.65;">
+            <strong style="color:var(--color-text-primary);">Unlocking espionage:</strong> Espionage access is unlocked once you control at least <strong style="color:#a78bfa;">5 espionage centre provinces</strong>. Below that threshold the entire espionage tab stays locked — build your network first.
+          </div>
+        </div>
+        <div style="height:1px;background:var(--color-border-secondary);"></div>
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <span style="font-size:16px;flex-shrink:0;margin-top:1px;">🎭</span>
+          <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.65;">
+            <strong style="color:var(--color-text-primary);">Impersonation:</strong> Any espionage-capable player can impersonate another player for <strong style="color:#a78bfa;">30 seconds</strong> at a cost of <strong style="color:#a78bfa;">10 ECO</strong>. During that window you see their exact map view, access their chat channels, and can send messages that appear under their name. It's a powerful intelligence tool — use it wisely.
+          </div>
+        </div>
+        <div style="height:1px;background:var(--color-border-secondary);"></div>
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <span style="font-size:16px;flex-shrink:0;margin-top:1px;">💸</span>
+          <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.65;">
+            <strong style="color:var(--color-text-primary);">Cost scaling:</strong> Most espionage actions cost <strong style="color:#a78bfa;">6 minus the number of espionage centres you own</strong> in ECO — so the more centres you hold, the cheaper your ops become. Expand your network and your spies get better funded.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Fog of War ── -->
+    <div style="background:var(--color-background-secondary);border:1px solid var(--color-border-primary);border-radius:var(--border-radius-lg);overflow:hidden;margin-bottom:16px;">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--color-border-secondary);display:flex;align-items:center;gap:10px;background:rgba(100,116,139,0.08);">
+        <span style="font-size:20px;">🌫️</span>
+        <span style="font-size:14px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.7px;">Fog of War</span>
+      </div>
+      <div style="padding:20px;display:grid;gap:12px;">
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <span style="font-size:16px;flex-shrink:0;margin-top:1px;">👁️</span>
+          <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.65;">
+            <strong style="color:var(--color-text-primary);">Limited vision:</strong> The fog of war means you can only gather real-time data from provinces <strong style="color:#94a3b8;">close to your own territory</strong>. Provinces far from your borders show stale, outdated intel — you won't know what's really going on over there.
+          </div>
+        </div>
+        <div style="height:1px;background:var(--color-border-secondary);"></div>
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <span style="font-size:16px;flex-shrink:0;margin-top:1px;">🔭</span>
+          <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.65;">
+            <strong style="color:var(--color-text-primary);">Lifting the fog:</strong> Under certain conditions — primarily by spending ECO through espionage — you can temporarily lift the fog entirely and gain full map visibility for <strong style="color:#94a3b8;">24 hours</strong>. This is expensive but can be game-changing at the right moment.
+          </div>
+        </div>
+        <div style="height:1px;background:var(--color-border-secondary);"></div>
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <span style="font-size:16px;flex-shrink:0;margin-top:1px;">😤</span>
+          <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.65;">
+            <strong style="color:var(--color-text-primary);">Yes, it's intentional:</strong> The fog of war can feel limiting and at times deeply annoying — that's entirely by design. Information asymmetry is a core part of the game. Not knowing what your neighbours are up to creates tension, drives diplomacy, and makes espionage genuinely valuable. <strong style="color:#94a3b8;">IT'S A FEATURE. TRUST.</strong>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -75807,11 +75869,11 @@ function chatPlayerColor(name) {
 }
 
 function subscribeChat() {
-  console.log('[CHAT] subscribeChat called, current channel:', chatCurrentChannel);
+
   if (chatUnsubscribe) { try { chatUnsubscribe(); } catch(e){} chatUnsubscribe = null; }
 
   var db = window.firebaseDb;
-  if (!db) { console.warn('[CHAT] Firebase DB not available'); return; }
+  if (!db) { return; }
 
   var myEmail = chatGetMyEmail();
   if (!myEmail) { renderChatTab(); return; }
@@ -75823,7 +75885,7 @@ function subscribeChat() {
     var msgs = data ? Object.values(data) : [];
     msgs.sort(function(a,b){ return (a.ts||0)-(b.ts||0); });
     chatMessagesCache[chatCurrentChannel] = msgs;
-    console.log('[CHAT] Received', msgs.length, 'messages for channel', chatCurrentChannel);
+
     if (typeof maybeSendChatNotif === 'function') maybeSendChatNotif(chatCurrentChannel, msgs);
     if (chatCurrentChannel === 'global') { try { autoTrimGlobalChatIfNeeded(); } catch(e){} }
     updateChatBadge();
@@ -75861,7 +75923,7 @@ function subscribeChat() {
 }
 
 function switchChatChannel(channelId) {
-  console.log('[CHAT] switchChatChannel:', channelId);
+
   chatCurrentChannel = channelId;
   // Mark as seen
   var msgs = chatMessagesCache[channelId] || [];
@@ -75878,7 +75940,7 @@ function startDm() {
   if (!myEmail) return;
   if (targetEmail === myEmail) { overlordAlert('You cannot DM yourself.'); return; }
   var channelId = chatDmChannelId(myEmail, targetEmail);
-  console.log('[CHAT] Starting DM channel:', channelId);
+
   if (!chatOpenDms.includes(channelId)) chatOpenDms.push(channelId);
   if (!chatMessagesCache[channelId]) chatMessagesCache[channelId] = [];
   sel.value = '';
@@ -75933,7 +75995,7 @@ async function sendChatMessage() {
     })();
   }
 
-  console.log('[CHAT] Sending message to channel:', chatCurrentChannel, '| text:', text.slice(0,60));
+
 
   var msg = {
     id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
@@ -75947,7 +76009,7 @@ async function sendChatMessage() {
   try {
     var db = window.firebaseDb;
     await window.firebaseSet(window.firebaseRef(db, 'chat/' + chatCurrentChannel + '/' + msg.id), msg);
-    console.log('[CHAT] Message sent:', msg.id);
+
     // Log to gameLog
     logAction('chat', 'Chat message sent in channel: ' + chatCurrentChannel, {
       channel: chatCurrentChannel,
@@ -75958,7 +76020,7 @@ async function sendChatMessage() {
     chatLastSeen[chatCurrentChannel] = msg.ts;
     if (typeof saveChatLastSeenToCookie === 'function') saveChatLastSeenToCookie();
   } catch(e) {
-    console.error('[CHAT] Failed to send message:', e);
+
     overlordAlert('Failed to send message: ' + e.message);
   }
 }
@@ -76043,7 +76105,7 @@ function populateChatDmDropdown() {
       }
       sel.innerHTML = opts;
     }).catch(function(e) {
-      console.warn('[CHAT] Could not load registered users for DM dropdown:', e);
+
       // Fallback: use workingNations only
       if (workingNations && workingNations.length) {
         workingNations.forEach(function(n) {
@@ -76358,7 +76420,7 @@ async function adminDeleteChatMsg(channelId, msgId) {
     await window.firebaseSet(window.firebaseRef(window.firebaseDb, 'chat/' + channelId + '/' + msgId), null);
     showAdminToast('Message deleted.', 'success');
   } catch(e) {
-    console.error('[CHAT] adminDeleteChatMsg failed', e);
+
     showAdminToast('Delete failed: ' + e.message, 'error');
   }
 }
@@ -76373,7 +76435,7 @@ async function adminMuteChatUser(email, playerName) {
   // Persist mute in Firebase so it survives page refreshes
   try {
     await window.firebaseSet(window.firebaseRef(window.firebaseDb, 'chatMutes/' + email.toLowerCase().replace(/[@.]/g, '_')), { email: email.toLowerCase(), unmuteAt: unmuteAt });
-  } catch(e) { console.warn('[CHAT] Could not persist mute', e); }
+  } catch(e) { }
   showAdminToast('Muted ' + (playerName || email) + ' for 5 minutes.', 'success');
 }
 
@@ -76444,7 +76506,7 @@ function isInLockoutPeriod() {
   var t = getSydneyTime();
   // No lockout on weekends
   if (t.isWeekend) {
-    console.log('[LOCKOUT] Weekend — lockout disabled.');
+
     return false;
   }
   var nowMins  = t.h * 60 + t.m;
@@ -76452,7 +76514,7 @@ function isInLockoutPeriod() {
   var endMins   = LOCKOUT_END_H   * 60 + LOCKOUT_END_M;
   // Same-day window (no midnight span): locked if between start and end
   var locked = nowMins >= startMins && nowMins < endMins;
-  console.log('[LOCKOUT] nowMins=' + nowMins + ' startMins=' + startMins + ' endMins=' + endMins + ' → locked=' + locked);
+
   return locked;
 }
 
@@ -76597,12 +76659,12 @@ Object.defineProperty(window, 'school_blocked', {
     if (!val && isInLockoutPeriod()) {
       _lockoutOverride = null; // keep locked
       applyTouchGrassScreen();
-      console.log('[LOCKOUT] Nice try. Touch grass.');
+
       return;
     }
     _lockoutOverride = !!val;
     applyLockoutState();
-    console.log('[LOCKOUT] Override set → school_blocked=' + _lockoutOverride);
+
   },
   configurable: false
 });
@@ -76700,7 +76762,7 @@ function _lockoutTick() {
 
 function applyLockoutState() {
   var locked = isLockedOut();
-  console.log('[LOCKOUT] applyLockoutState called, locked=' + locked);
+
 
   // ── Full page overlay ──
   var pageOverlay = document.getElementById('pageLockedOverlay');
@@ -76783,14 +76845,14 @@ function _updateLockoutHud() {
 
 // Run immediately (DOMContentLoaded has almost certainly already fired at this point
 // since this script is near the bottom of the page)
-console.log('[LOCKOUT] Initialising. Sydney time:', (function(){
+
   var t = getSydneyTime();
   var pad = function(n){ return n < 10 ? '0'+n : ''+n; };
   return pad(t.h)+':'+pad(t.m)+':'+pad(t.s);
 })());
 _initLockoutCache(); // check once, cache result
-console.log('[LOCKOUT] isInLockoutPeriod:', _lockoutCached);
-console.log('[LOCKOUT] LOCKOUT_START:', LOCKOUT_START_H + ':' + (LOCKOUT_START_M < 10 ? '0' : '') + LOCKOUT_START_M,
+
+
             '| LOCKOUT_END:', LOCKOUT_END_H + ':' + (LOCKOUT_END_M < 10 ? '0' : '') + LOCKOUT_END_M);
 
 applyLockoutState();
@@ -76888,16 +76950,16 @@ function hasEspionageAccess() {
   // Use workingProvinces if populated (admin flow), else fall back to provincesData
   var provs = (workingProvinces && workingProvinces.length) ? workingProvinces : (provincesData || []);
   if (!provs.length) {
-    console.log('[ESPIONAGE] No province data loaded yet for', myName);
+
     return false;
   }
   var result = ESPIONAGE_ACCESS_PROVINCES.some(function(provNum) {
     var pr = provs.find(function(p) { return parseInt(p.number) === provNum; });
     var own = pr ? getPlayerOwnership(pr, myName) : 0;
-    if (pr) console.log('[ESPIONAGE] Province #' + provNum + ' ownership for ' + myName + ': ' + own + '%');
+    if (pr)
     return pr && own >= 50;
   });
-  console.log('[ESPIONAGE] hasEspionageAccess for', myName, ':', result);
+
   return result;
 }
 
@@ -76914,13 +76976,13 @@ function updateEspionageTabVisibility() {
 
   // If we have a player name and province data, evaluate access now
   if (myName && provs.length) {
-    console.log('[ESPIONAGE] updateEspionageTabVisibility: checking access for', myName, 'with', provs.length, 'provinces');
+
     if (_espionageVisibilityTimer) { clearTimeout(_espionageVisibilityTimer); _espionageVisibilityTimer = null; }
     if (hasEspionageAccess()) {
-      console.log('[ESPIONAGE] Access GRANTED — showing tab');
+
       btn.style.display = '';
     } else {
-      console.log('[ESPIONAGE] Access DENIED — hiding tab');
+
       btn.style.display = 'none';
       if (btn.classList.contains('active')) {
         document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
@@ -76933,7 +76995,7 @@ function updateEspionageTabVisibility() {
   }
 
   // Data not ready yet — retry every 500ms for up to 15 seconds
-  console.log('[ESPIONAGE] Data not ready yet (player:', myName || 'none', ', provinces:', provs.length, ') — will retry');
+
   if (_espionageVisibilityTimer) return; // already waiting
   var attempts = 0;
   _espionageVisibilityTimer = setInterval(function() {
@@ -76942,7 +77004,7 @@ function updateEspionageTabVisibility() {
     var provs2 = (typeof provincesData !== 'undefined' && provincesData && provincesData.length)
       ? provincesData
       : ((typeof workingProvinces !== 'undefined' && workingProvinces && workingProvinces.length) ? workingProvinces : []);
-    console.log('[ESPIONAGE] retry', attempts, '- player:', name2 || 'none', ', provinces:', provs2.length);
+
     if (name2 && provs2.length) {
       clearInterval(_espionageVisibilityTimer);
       _espionageVisibilityTimer = null;
@@ -76950,7 +77012,7 @@ function updateEspionageTabVisibility() {
     } else if (attempts >= 30) {
       clearInterval(_espionageVisibilityTimer);
       _espionageVisibilityTimer = null;
-      console.log('[ESPIONAGE] Gave up waiting for data after 15s');
+
     }
   }, 500);
 }
@@ -77011,7 +77073,7 @@ function renderEspionageTab() {
     <!-- ── Impersonation ── -->
     <div class="actions-card" style="margin-bottom:18px;">
       <div class="actions-section-title" style="margin-bottom:12px;">
-        Impersonation — <span style="color:var(--color-text-tertiary);font-weight:400;font-size:12px;">Cost: ${performCost} ECO · 30 seconds</span>
+        Impersonation — <span style="color:var(--color-text-tertiary);font-weight:400;font-size:12px;">Cost: 10 ECO · 30 seconds</span>
       </div>
       <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:12px;line-height:1.6;">
         Spend ${performCost} ECO to temporarily act as another player for <strong style="color:var(--color-text-primary);">30 seconds</strong>. You will see their map view, access their chat channels, and can send messages as them. Actions are disabled for the duration.
@@ -77027,7 +77089,7 @@ function renderEspionageTab() {
           }).join('')}
         </select>
         <button onclick="(function(){ var sel=document.getElementById('espImpTargetSelect'); if(!sel||!sel.value){overlordAlert('Select a player to impersonate.');return;} startEspImpersonation(sel.value); })()" ${isEspImpersonating() ? 'disabled' : ''} style="padding:9px 22px;font-family:inherit;font-size:13px;font-weight:700;background:linear-gradient(135deg,#3b0f0f,#991b1b);color:#fecaca;border:1px solid #dc2626;border-radius:var(--border-radius-md);cursor:${isEspImpersonating() ? 'not-allowed' : 'pointer'};opacity:${isEspImpersonating() ? '0.5' : '1'};white-space:nowrap;" onmouseover="if(!this.disabled)this.style.opacity=0.85" onmouseout="if(!this.disabled)this.style.opacity=1">
-          ${isEspImpersonating() ? '🕵️ Impersonating…' : 'Pay ' + performCost + ' ECO — Impersonate'}
+          ${isEspImpersonating() ? '🕵️ Impersonating…' : 'Pay 10 ECO — Impersonate'}
         </button>
       </div>
     </div>
@@ -77101,7 +77163,7 @@ async function performSignalIntercept() {
   p.econ = String(Math.round((eco - 5) * 100) / 100);
   syncWorkingDataToSheets();
   logAction('espionage', 'Signal intercept used — 5 ECO deducted', { ecoSpent: 5 });
-  try { await uploadWorkbookToFirebase(); } catch(e) { console.warn('[ESPIONAGE] Could not sync eco to Firebase:', e); }
+  try { await uploadWorkbookToFirebase(); } catch(e) { }
 
   // Pick a random espionage hub province that the player does NOT know about
   // "Does not know" = doesn't own it. We shuffle ESPIONAGE_ACCESS_PROVINCES and pick one
@@ -77163,7 +77225,7 @@ async function performEspionage() {
   p.econ = String(Math.round((eco - cost) * 100) / 100);
   syncWorkingDataToSheets();
   logAction('espionage', 'Espionage search performed — keyword redacted', { ecoSpent: cost, centerCount: myCenterCount });
-  try { await uploadWorkbookToFirebase(); } catch(e2) { console.warn('[ESPIONAGE] Could not sync eco to Firebase:', e2); }
+  try { await uploadWorkbookToFirebase(); } catch(e2) { }
 
   // Search ALL chat channels from Firebase directly (including DMs not yet opened)
   var allMessages = [];
@@ -77185,7 +77247,7 @@ async function performEspionage() {
       });
     }
   } catch (fetchError) {
-    console.warn('[ESPIONAGE] Could not fetch all chat channels from Firebase:', fetchError);
+
   }
 
   // Fallback: use cached channels if no Firebase data was available
@@ -77515,7 +77577,7 @@ window.renderEspionageAdminPanel = renderEspionageAdminPanel;
     if (typeof showAdminToast === 'function') {
       showAdminToast('Map snapshot saved: ' + filename, 'success');
     }
-    console.log('[MapSnapshot] Downloaded:', filename);
+
     return true;
   }
 
@@ -77544,11 +77606,11 @@ window.renderEspionageAdminPanel = renderEspionageAdminPanel;
       var svgReady = container && container.querySelector('svg');
       if (svgReady) {
         clearInterval(poll);
-        console.log('[MapSnapshot] Auto-download triggered for', today);
+
         downloadMapSnapshot(false);
       } else if (attempts >= maxAttempts) {
         clearInterval(poll);
-        console.log('[MapSnapshot] SVG not found within timeout; skipping auto-download.');
+
       }
     }, 2000);
   }
