@@ -1897,6 +1897,14 @@ window.populateWorkbookFromFirebaseData = populateWorkbookFromFirebaseData;
           Assign the selected provinces as starting territory for that player. This updates ownership, trade nodes, income, and exports automatically.
         </div>
 
+        <div class="auto-sub-title">Fix exports</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;">
+          <button onclick="fixAllExports()" style="padding:8px 16px;font-family:inherit;font-size:13px;font-weight:500;color:#fff;background:#b45309;border:none;border-radius:var(--border-radius-md);cursor:pointer;">🔧 Fix All Exports</button>
+        </div>
+        <div style="font-size:12px;color:var(--color-text-tertiary);margin-bottom:8px;">
+          Scans every player's owned provinces and adds any missing exports derived from <em>original_export</em>. Safe to run multiple times — won't duplicate existing entries.
+        </div>
+
         <div class="auto-sub-title">Add Sea Crossing</div>
         <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px;">
           <div><label class="auto-label">Province 1</label><select id="seaCrossingProv1" style="padding:8px;font-family:inherit;font-size:13px;border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);min-width:140px;"></select></div>
@@ -2401,6 +2409,8 @@ function loadUserAssignments() {
         }
         renderAssignmentList();
         if (typeof renderActionsTab === 'function') renderActionsTab();
+        // Re-render chat tab in case it was open but blocked by missing assignments
+        if (typeof renderChatTab === 'function') { renderChatTab._retryCount = 0; renderChatTab(); }
         if (typeof populateChatDmDropdown === 'function') populateChatDmDropdown();
         if (typeof renderChatSidebar === 'function') renderChatSidebar();
         if (typeof updateEspionageTabVisibility === 'function') updateEspionageTabVisibility();
@@ -2654,6 +2664,43 @@ function assignStartingProvinces() {
 
   displayAdminMessage('Assigned starting provinces to ' + playerName + '.', 'success');
 }
+
+function fixAllExports() {
+  var fixed = 0;
+  var log = [];
+  workingNations.forEach(function(player) {
+    var playerName = (player.first_name + ' ' + player.surname).trim();
+    if (!playerName) return;
+    // Find all provinces this player owns >= 50%
+    var ownedProvs = workingProvinces.filter(function(pr) {
+      return getPlayerOwnership(pr, playerName) >= 50;
+    });
+    var changed = false;
+    ownedProvs.forEach(function(pr) {
+      var exportItem = getExportItemFromProvince(pr);
+      if (!exportItem) return;
+      var existing = parseExports(player.exports);
+      var alreadyHas = existing.items.some(function(e) {
+        return normalizeName(e.name) === normalizeName(String(pr.original_export).trim());
+      });
+      if (!alreadyHas) {
+        player.exports = player.exports ? player.exports + ', ' + exportItem : exportItem;
+        log.push(playerName + ' ← ' + String(pr.original_export).trim());
+        changed = true;
+      }
+    });
+    if (changed) fixed++;
+  });
+  syncWorkingDataToSheets();
+  renderWorkingTable();
+  if (log.length) {
+    addToLog('Fix exports: added ' + log.length + ' missing export(s) across ' + fixed + ' player(s): ' + log.join('; '));
+    displayAdminMessage('Fixed ' + log.length + ' missing export(s) across ' + fixed + ' player(s).', 'success');
+  } else {
+    displayAdminMessage('All exports look correct — nothing to fix.', 'success');
+  }
+}
+window.fixAllExports = fixAllExports;
 
 function renderAssignmentList() {
   var listEl = document.getElementById('userAssignmentList');
@@ -4709,6 +4756,18 @@ async function firebaseLoginPopup() {
   openAdminLoginModal();
   return false;
 }
+// ── Safe stubs for functions defined in later <script> blocks ──────────────
+// These are overwritten by the real definitions further down the page.
+if (typeof isLockedOut === 'undefined') {
+  window.isLockedOut = function() {
+    if (typeof isInLockoutPeriod === 'function') return isInLockoutPeriod();
+    return false;
+  };
+}
+if (typeof applyLockoutState === 'undefined') {
+  window.applyLockoutState = function() {};
+}
+
 // ═══════════════════════════════════════
 // TAB SWITCHING
 // ═══════════════════════════════════════
@@ -74372,21 +74431,32 @@ async function selfRegisterPlayer() {
     newNation.subsidies = '';
     workingNations.push(newNation);
     var newIdx = workingNations.length - 1;
-    // Assign 3 starting provinces
+    // Assign 3 starting provinces — mirrors assignStartingProvinces() exactly
+    var _addedExports = [];
     chosen.forEach(function(provNum) {
       var pr = workingProvinces.find(function(p){ return parseInt(p.number) === provNum; });
       if (!pr) return;
+      pr.starting_player = fullName;
       ['owner1','owner2','owner3','owner4'].forEach(function(k){ pr[k] = ''; });
-      pr.owner1 = fullName + ' 100%';
+      pr.owner1 = fullName;
+      // Apply exports from province original_export
+      var exportItem = getExportItemFromProvince(pr);
+      if (exportItem && !parseExports(newNation.exports).items.some(function(e) {
+        return normalizeName(e.name) === normalizeName(pr.original_export);
+      })) {
+        newNation.exports = newNation.exports ? newNation.exports + ', ' + exportItem : exportItem;
+        _addedExports.push(String(pr.original_export).trim());
+      }
     });
     // Register assignment
     var emailKey = user.email.toLowerCase().replace(/\./g,'_');
     userAssignments = userAssignments || {};
     userAssignments[user.email.toLowerCase()] = fullName;
     window.firebaseSet(window.firebaseRef(window.firebaseDb, 'userAssignments/' + emailKey), fullName);
-    addToLog('Self-registration: ' + fullName + ' created, claimed provinces #' + chosen.join(', #'));
+    addToLog('Self-registration: ' + fullName + ' created, claimed provinces #' + chosen.join(', #') + (_addedExports.length ? ' (exports: ' + _addedExports.join(', ') + ')' : ''));
     syncTradeNodes();
     updateWorkingNationProvinceStats();
+    syncWorkingDataToSheets();
     refreshAutoDropdowns();
   });
   renderActionsTab();
@@ -76131,8 +76201,19 @@ function renderChatTab() {
   if (!user) {
     loginGate.style.display = 'block'; if (noPlayerGate) noPlayerGate.style.display = 'none'; main.style.display = 'none'; return;
   }
+  // Admins always get access; also retry once if assignments haven't loaded from Firebase yet
   var assignedIdx = (typeof findAssignedPlayerIdx === 'function') ? findAssignedPlayerIdx() : -1;
-  if (assignedIdx < 0) {
+  var isAdmin = (typeof isAdminUser === 'function') ? isAdminUser() : false;
+  if (assignedIdx < 0 && !isAdmin) {
+    // Assignments may still be loading from Firebase — wait briefly and retry once
+    var _chatRetryCount = renderChatTab._retryCount || 0;
+    if (_chatRetryCount < 3 && Object.keys(userAssignments || {}).length === 0) {
+      renderChatTab._retryCount = _chatRetryCount + 1;
+      setTimeout(function() { renderChatTab._retryCount = 0; renderChatTab(); }, 800);
+      loginGate.style.display = 'none'; if (noPlayerGate) noPlayerGate.style.display = 'none';
+      main.style.display = 'none';
+      return;
+    }
     loginGate.style.display = 'none'; if (noPlayerGate) noPlayerGate.style.display = 'block'; main.style.display = 'none'; return;
   }
   loginGate.style.display = 'none'; if (noPlayerGate) noPlayerGate.style.display = 'none'; main.style.display = 'flex';
