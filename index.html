@@ -404,6 +404,8 @@ function setAdminAuthUI(user) {
     setTimeout(function() { if (typeof subscribeAllianceGcs === 'function') subscribeAllianceGcs(); }, 1500);
     // Load game start date
     if (typeof loadGameStartDate === 'function') loadGameStartDate();
+    // Load fog-clear status
+    if (typeof loadFogClearStatus === 'function') loadFogClearStatus();
     // Check if automatic daily update needs to run
     setTimeout(function() {
       if (typeof checkAndRunAutomaticUpdates === 'function') checkAndRunAutomaticUpdates();
@@ -71801,9 +71803,77 @@ function getMapNationsForWeek(sheetName) {
  *           any province directly bordering those owned provinces.
  * If no player is logged in, returns null (admin sees all).
  */
+// ── Fog-of-war clear override ─────────────────────────────────
+// Stored in Firebase at: fogClear/<playerEmailKey> -> expiryTimestamp
+var _fogClearExpiry = 0; // local cache; 0 = not active
+
+function isFogCleared() {
+  return _fogClearExpiry > 0 && Date.now() < _fogClearExpiry;
+}
+
+function loadFogClearStatus() {
+  var user = window.firebaseAuth && window.firebaseAuth.currentUser;
+  if (!user || !window.firebaseDb) return;
+  var key = user.email.replace(/\./g, ',');
+  var ref = window.firebaseRef(window.firebaseDb, 'fogClear/' + key);
+  window.firebaseOnValue(ref, function(snap) {
+    _fogClearExpiry = snap.exists() ? (snap.val() || 0) : 0;
+    // If expired, clean up
+    if (_fogClearExpiry && Date.now() >= _fogClearExpiry) {
+      window.firebaseSet(ref, null);
+      _fogClearExpiry = 0;
+    }
+    if (typeof renderMap === 'function') renderMap();
+    if (typeof renderEspionageTab === 'function') renderEspionageTab();
+  });
+}
+window.loadFogClearStatus = loadFogClearStatus;
+
+async function activateFogClear() {
+  var user = window.firebaseAuth && window.firebaseAuth.currentUser;
+  if (!user) { overlordAlert('Log in to use this action.'); return; }
+
+  var assignedIdx = findAssignedPlayerIdx();
+  if (assignedIdx < 0) { overlordAlert('You are not assigned to a player.'); return; }
+  var p = workingNations[assignedIdx];
+  var eco = parseFloat(p.econ) || 0;
+
+  var myCenterCount = countMyEspionageCenters();
+  var cost = Math.max(1, 6 - myCenterCount);
+
+  if (eco < cost) {
+    overlordAlert('Not enough ECO. You need ' + cost + ' ECO to clear the fog of war. You have ' + eco.toFixed(1) + '.');
+    return;
+  }
+
+  if (isFogCleared()) {
+    overlordAlert('Fog of war is already cleared. It will expire on ' + new Date(_fogClearExpiry).toLocaleString() + '.');
+    return;
+  }
+
+  if (!confirm('Spend ' + cost + ' ECO to remove fog of war for 24 hours?')) return;
+
+  // Deduct ECO
+  p.econ = String(Math.round((eco - cost) * 100) / 100);
+  syncWorkingDataToSheets();
+  logAction('espionage', 'Fog of War cleared for 24h — ' + cost + ' ECO spent', { ecoSpent: cost });
+  try { await uploadWorkbookToFirebase(); } catch(e) { console.warn('[FOG CLEAR] Could not sync ECO:', e); }
+
+  // Write expiry to Firebase (now + 24h)
+  var expiry = Date.now() + 24 * 60 * 60 * 1000;
+  var key = user.email.replace(/\./g, ',');
+  var ref = window.firebaseRef(window.firebaseDb, 'fogClear/' + key);
+  await window.firebaseSet(ref, expiry);
+  // _fogClearExpiry will be updated by the onValue listener above
+}
+window.activateFogClear = activateFogClear;
+// ─────────────────────────────────────────────────────────────
+
 function getFogVisibleProvinces() {
   // Admins see everything — unless sandbox/impersonation mode is active
   if (isFogAdmin()) return null;
+  // Active fog-clear override — show all provinces
+  if (isFogCleared()) return null;
   var cache = _buildFogCache();
   return cache ? cache.visibleProvs : null;
 }
@@ -71880,6 +71950,7 @@ function invalidateFogCache() {
 
 function getFogVisibleNations() {
   if (isFogAdmin()) return null;
+  if (isFogCleared()) return null;
   var cache = _buildFogCache();
   return cache ? cache.visibleNations : null;
 }
@@ -76648,6 +76719,7 @@ function countAllEspionageCenters() {
 }
 
 function hasEspionageAccess() {
+  if (isAdminUser()) return true;
   var myName = getAssignedPlayerName();
   if (!myName) return false;
   // Use workingProvinces if populated (admin flow), else fall back to provincesData
@@ -76771,6 +76843,20 @@ function renderEspionageTab() {
       <span style="color:var(--color-text-secondary);">Your Centers: </span>
       <strong style="color:#a78bfa;">${myCenterCount}</strong>
       <span style="color:var(--color-text-tertiary);font-size:11px;"> (access provinces owned)</span>
+    </div>
+
+    <!-- ── Clear Fog of War ── -->
+    <div class="actions-card" style="margin-bottom:18px;">
+      <div class="actions-section-title" style="margin-bottom:12px;">
+        Clear Fog of War — <span style="color:var(--color-text-tertiary);font-weight:400;font-size:12px;">Cost: ${performCost} ECO</span>
+      </div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:12px;line-height:1.6;">
+        Spend ${performCost} ECO to lift the fog of war entirely for <strong style="color:var(--color-text-primary);">24 hours</strong> — you will see full map detail and complete nation overviews for all players, regardless of proximity.
+        ${isFogCleared() ? '<div style="margin-top:8px;padding:8px 12px;background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.3);border-radius:6px;color:#4ade80;font-weight:600;">✓ Active — expires ' + new Date(_fogClearExpiry).toLocaleString() + '</div>' : ''}
+      </div>
+      <button onclick="activateFogClear()" ${isFogCleared() ? 'disabled' : ''} style="padding:9px 22px;font-family:inherit;font-size:13px;font-weight:700;background:linear-gradient(135deg,#1a3a1a,#15803d);color:#bbf7d0;border:1px solid #16a34a;border-radius:var(--border-radius-md);cursor:${isFogCleared() ? 'not-allowed' : 'pointer'};opacity:${isFogCleared() ? '0.5' : '1'};transition:opacity 0.15s;" onmouseover="if(!this.disabled)this.style.opacity=0.85" onmouseout="if(!this.disabled)this.style.opacity=1">
+        ${isFogCleared() ? '✓ Fog Already Cleared' : 'Pay ' + performCost + ' ECO — Clear Fog of War'}
+      </button>
     </div>
 
     <!-- ── Signal Intercept ── -->
