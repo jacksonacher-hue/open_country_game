@@ -69,6 +69,7 @@ window.firebaseUpdate = _sandboxUpdate;
  */
 function isFogAdmin() {
   if (_sandboxMode) return false;
+  if (isEspImpersonating()) return false; // see target's fog view
   return isAdminUser();
 }
 
@@ -76,6 +77,8 @@ function setSandboxMode(on) {
   _sandboxMode = !!on;
   var bar = document.getElementById('sandboxBar');
   if (bar) bar.style.display = _sandboxMode ? 'flex' : 'none';
+  // Clear any locally-applied fog override when leaving sandbox
+  if (!_sandboxMode) { _fogClearExpiry = 0; if (typeof loadFogClearStatus === 'function') loadFogClearStatus(); }
   invalidateFogCache();
   if (typeof renderMap === 'function') renderMap();
   if (typeof populateDashboard === 'function') populateDashboard();
@@ -2778,6 +2781,19 @@ function renderActionsTab() {
     return;
   }
 
+  // ── Espionage impersonation: actions blocked ──────────────────
+  if (isEspImpersonating()) {
+    var impLeft = Math.max(0, Math.ceil((_espImp.expiry - Date.now()) / 1000));
+    contentEl.innerHTML =
+      '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 24px;gap:16px;text-align:center;">' +
+        '<div style="font-size:48px;">🕵️</div>' +
+        '<div style="font-size:20px;font-weight:700;color:#fca5a5;letter-spacing:1px;text-transform:uppercase;">Actions Blocked</div>' +
+        '<div style="font-size:13px;color:var(--color-text-secondary);max-width:380px;">You are currently impersonating <strong style="color:#fff;">' + esc(getEspImpPlayerName()) + '</strong>. Actions are disabled for the duration of the impersonation.</div>' +
+        '<div style="font-size:11px;color:var(--color-text-tertiary);">Expires in ' + impLeft + 's · <a href="#" onclick="stopEspImpersonation();return false;" style="color:#fca5a5;">End early</a></div>' +
+      '</div>';
+    return;
+  }
+
   var otherPlayerOpts = buildPlayerOptions(assignedIdx);
   var warOpts = buildAssignedWarOptions(0);
   var battleWarOpts = buildAssignedWarOptions(1);
@@ -3218,6 +3234,12 @@ window.setAdminImpersonation = setAdminImpersonation;
 window.exitSandboxImpersonation = exitSandboxImpersonation;
 
 function findAssignedPlayerIdx() {
+  // Espionage impersonation: act as target player for fog/map/chat
+  if (isEspImpersonating()) {
+    return workingNations.findIndex(function(n) {
+      return normalizeName((n.first_name + ' ' + n.surname).trim()) === normalizeName(_espImp.playerName);
+    });
+  }
   // Admin impersonation override
   if (isAdminUser() && _adminImpersonating) {
     var impIdx = workingNations.findIndex(function(n) {
@@ -71851,20 +71873,30 @@ async function activateFogClear() {
     return;
   }
 
-  if (!confirm('Spend ' + cost + ' ECO to remove fog of war for 24 hours?')) return;
+  var sandboxMsg = _sandboxMode ? '\n\n[SANDBOX] ECO deduction and fog clear will apply locally only — no Firebase writes.' : '';
+  if (!confirm('Spend ' + cost + ' ECO to remove fog of war for 24 hours?' + sandboxMsg)) return;
 
-  // Deduct ECO
+  // Deduct ECO locally
   p.econ = String(Math.round((eco - cost) * 100) / 100);
   syncWorkingDataToSheets();
-  logAction('espionage', 'Fog of War cleared for 24h — ' + cost + ' ECO spent', { ecoSpent: cost });
-  try { await uploadWorkbookToFirebase(); } catch(e) { console.warn('[FOG CLEAR] Could not sync ECO:', e); }
 
-  // Write expiry to Firebase (now + 24h)
   var expiry = Date.now() + 24 * 60 * 60 * 1000;
-  var key = user.email.replace(/\./g, ',');
-  var ref = window.firebaseRef(window.firebaseDb, 'fogClear/' + key);
-  await window.firebaseSet(ref, expiry);
-  // _fogClearExpiry will be updated by the onValue listener above
+
+  if (_sandboxMode) {
+    // Sandbox: apply effect locally only, no Firebase writes, no workbook upload
+    _fogClearExpiry = expiry;
+    console.log('[SANDBOX] Fog of war cleared locally until', new Date(expiry).toLocaleString());
+    showAdminToast('🧪 Sandbox: Fog cleared locally for 24h (not saved to Firebase)', 'success');
+    if (typeof renderMap === 'function') renderMap();
+    if (typeof renderEspionageTab === 'function') renderEspionageTab();
+  } else {
+    logAction('espionage', 'Fog of War cleared for 24h — ' + cost + ' ECO spent', { ecoSpent: cost });
+    try { await uploadWorkbookToFirebase(); } catch(e) { console.warn('[FOG CLEAR] Could not sync ECO:', e); }
+    // Write expiry to Firebase — onValue listener will update _fogClearExpiry and re-render
+    var key = user.email.replace(/\./g, ',');
+    var ref = window.firebaseRef(window.firebaseDb, 'fogClear/' + key);
+    await window.firebaseSet(ref, expiry);
+  }
 }
 window.activateFogClear = activateFogClear;
 // ─────────────────────────────────────────────────────────────
@@ -73275,7 +73307,135 @@ window.filterHistoryLog = filterHistoryLog;
 // ══════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════
-// GAME START DATE  — saved to Firebase at gameSettings/startDate
+// ESPIONAGE IMPERSONATION
+// Lets a player temporarily act as another player (view their map,
+// chat as them) for 30 seconds. Actions tab is blocked during this.
+// ═══════════════════════════════════════════════════════════════
+
+var _espImp = null; // { playerName, emailKey, expiry, timerInterval }
+
+function isEspImpersonating() {
+  return !!_espImp && Date.now() < _espImp.expiry;
+}
+window.isEspImpersonating = isEspImpersonating;
+
+function getEspImpPlayerName() {
+  return isEspImpersonating() ? _espImp.playerName : null;
+}
+
+function stopEspImpersonation(silent) {
+  if (_espImp && _espImp.timerInterval) clearInterval(_espImp.timerInterval);
+  _espImp = null;
+  if (!silent) {
+    var bar = document.getElementById('espImpBar');
+    if (bar) bar.style.display = 'none';
+    if (typeof renderMap === 'function') renderMap();
+    if (typeof renderChatSidebar === 'function') renderChatSidebar();
+    if (typeof renderActionsTab === 'function') renderActionsTab();
+    if (typeof renderEspionageTab === 'function') renderEspionageTab();
+    showAdminToast('Espionage impersonation ended.', 'info');
+  }
+}
+window.stopEspImpersonation = stopEspImpersonation;
+
+async function startEspImpersonation(targetPlayerName) {
+  var user = window.firebaseAuth && window.firebaseAuth.currentUser;
+  if (!user) { overlordAlert('Log in to use this action.'); return; }
+  if (isEspImpersonating()) { overlordAlert('Already impersonating ' + _espImp.playerName + '. Wait for it to expire.'); return; }
+
+  var myIdx = findAssignedPlayerIdx();
+  if (myIdx < 0 && !isAdminUser()) { overlordAlert('You are not assigned to a player.'); return; }
+
+  // Cost check (skip for admin testing)
+  if (!isAdminUser()) {
+    var p = workingNations[myIdx];
+    var eco = parseFloat(p.econ) || 0;
+    var myCenterCount = countMyEspionageCenters();
+    var cost = Math.max(1, 6 - myCenterCount);
+    if (eco < cost) {
+      overlordAlert('Not enough ECO. You need ' + cost + ' ECO for impersonation. You have ' + eco.toFixed(1) + '.');
+      return;
+    }
+    if (!confirm('Spend ' + cost + ' ECO to impersonate ' + targetPlayerName + ' for 30 seconds?\n\nYou can view their map and chat as them. Actions are disabled.')) return;
+    p.econ = String(Math.round((eco - cost) * 100) / 100);
+    syncWorkingDataToSheets();
+    logAction('espionage', 'Impersonation of ' + targetPlayerName + ' for 30s — ' + cost + ' ECO spent', { ecoSpent: cost, target: targetPlayerName });
+    if (!_sandboxMode) {
+      try { await uploadWorkbookToFirebase(); } catch(e) { console.warn('[ESP IMP] Could not sync ECO:', e); }
+    }
+  } else {
+    if (!confirm('Impersonate ' + targetPlayerName + ' for 30 seconds? (Admin — no ECO cost)')) return;
+  }
+
+  var expiry = Date.now() + 30000;
+  if (_espImp && _espImp.timerInterval) clearInterval(_espImp.timerInterval);
+
+  // Find target's real email via userAssignments (email → playerName map)
+  var targetEmail = null;
+  if (userAssignments) {
+    Object.keys(userAssignments).forEach(function(email) {
+      if (normalizeName(userAssignments[email]) === normalizeName(targetPlayerName)) {
+        targetEmail = email.toLowerCase();
+      }
+    });
+  }
+  // Fallback: check registeredUsers
+  if (!targetEmail && window.registeredUsers) {
+    Object.keys(window.registeredUsers).forEach(function(k) {
+      var u = window.registeredUsers[k];
+      var name = (u.playerName || u.name || '').trim();
+      if (normalizeName(name) === normalizeName(targetPlayerName) && u.email) {
+        targetEmail = u.email.toLowerCase();
+      }
+    });
+  }
+
+  console.log('[ESP IMP] Target:', targetPlayerName, '| email:', targetEmail);
+
+  _espImp = {
+    playerName: targetPlayerName,
+    email: targetEmail, // may be null for players not yet registered
+    expiry: expiry,
+    timerInterval: null
+  };
+
+  // Show the espionage impersonation bar
+  var bar = document.getElementById('espImpBar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'espImpBar';
+    bar.style.cssText = 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:12px;padding:10px 20px;background:rgba(220,38,38,0.15);border:1px solid rgba(220,38,38,0.6);border-radius:24px;font-size:13px;font-weight:700;color:#fca5a5;backdrop-filter:blur(8px);box-shadow:0 4px 24px rgba(0,0,0,0.4);';
+    document.body.appendChild(bar);
+  }
+
+  function updateBar() {
+    var left = Math.max(0, Math.ceil((_espImp ? _espImp.expiry - Date.now() : 0) / 1000));
+    bar.innerHTML = '🕵️ Impersonating <strong style="color:#fff;">' + targetPlayerName + '</strong> &nbsp;·&nbsp; <span id="espImpCountdown" style="font-family:monospace;color:#fbbf24;">' + left + 's</span> &nbsp;<button onclick="stopEspImpersonation()" style="padding:4px 10px;font-family:inherit;font-size:11px;font-weight:700;color:#fff;background:rgba(220,38,38,0.4);border:1px solid rgba(220,38,38,0.8);border-radius:12px;cursor:pointer;">✕ End</button>';
+  }
+  bar.style.display = 'flex';
+  updateBar();
+
+  _espImp.timerInterval = setInterval(function() {
+    if (!_espImp || Date.now() >= _espImp.expiry) {
+      stopEspImpersonation(false);
+      return;
+    }
+    var left = Math.ceil((_espImp.expiry - Date.now()) / 1000);
+    var cd = document.getElementById('espImpCountdown');
+    if (cd) cd.textContent = left + 's';
+  }, 500);
+
+  // Re-render everything as the target player
+  invalidateFogCache();
+  if (typeof renderMap === 'function') renderMap();
+  if (typeof renderChatSidebar === 'function') renderChatSidebar();
+  if (typeof renderActionsTab === 'function') renderActionsTab();
+  if (typeof renderEspionageTab === 'function') renderEspionageTab();
+  showAdminToast('Now impersonating ' + targetPlayerName + ' for 30 seconds.', 'success');
+}
+window.startEspImpersonation = startEspImpersonation;
+
+// ═══════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════
 
 var _gameStartTs = null; // ms timestamp, null = no restriction
@@ -75630,11 +75790,14 @@ function chatDmChannelId(emailA, emailB) {
 }
 
 function chatGetMyEmail() {
+  // Espionage impersonation: chat as the target player
+  if (isEspImpersonating() && _espImp.email) return _espImp.email;
   var user = window.firebaseAuth && window.firebaseAuth.currentUser;
   return user ? user.email.toLowerCase() : '';
 }
 
 function chatGetMyPlayer() {
+  if (isEspImpersonating()) return _espImp.playerName;
   var idx = findAssignedPlayerIdx();
   return idx >= 0 ? getWN(idx) : (chatGetMyEmail() || 'Unknown');
 }
@@ -76843,6 +77006,30 @@ function renderEspionageTab() {
       <span style="color:var(--color-text-secondary);">Your Centers: </span>
       <strong style="color:#a78bfa;">${myCenterCount}</strong>
       <span style="color:var(--color-text-tertiary);font-size:11px;"> (access provinces owned)</span>
+    </div>
+
+    <!-- ── Impersonation ── -->
+    <div class="actions-card" style="margin-bottom:18px;">
+      <div class="actions-section-title" style="margin-bottom:12px;">
+        Impersonation — <span style="color:var(--color-text-tertiary);font-weight:400;font-size:12px;">Cost: ${performCost} ECO · 30 seconds</span>
+      </div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:12px;line-height:1.6;">
+        Spend ${performCost} ECO to temporarily act as another player for <strong style="color:var(--color-text-primary);">30 seconds</strong>. You will see their map view, access their chat channels, and can send messages as them. Actions are disabled for the duration.
+        ${isEspImpersonating() ? '<div style="margin-top:8px;padding:8px 12px;background:rgba(220,38,38,0.08);border:1px solid rgba(220,38,38,0.4);border-radius:6px;color:#fca5a5;font-weight:600;">🕵️ Currently impersonating: ' + esc(getEspImpPlayerName()) + '</div>' : ''}
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+        <select id="espImpTargetSelect" style="padding:9px 12px;font-family:inherit;font-size:13px;border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);background:var(--color-background-secondary);color:var(--color-text-primary);flex:1;min-width:160px;">
+          <option value="">— Select a player —</option>
+          ${workingNations.map(function(n,i){
+            var name = (n.first_name+' '+n.surname).trim();
+            if(i===assignedIdx && !isAdminUser()) return '';
+            return '<option value="'+esc(name)+'">'+esc(name)+'</option>';
+          }).join('')}
+        </select>
+        <button onclick="(function(){ var sel=document.getElementById('espImpTargetSelect'); if(!sel||!sel.value){overlordAlert('Select a player to impersonate.');return;} startEspImpersonation(sel.value); })()" ${isEspImpersonating() ? 'disabled' : ''} style="padding:9px 22px;font-family:inherit;font-size:13px;font-weight:700;background:linear-gradient(135deg,#3b0f0f,#991b1b);color:#fecaca;border:1px solid #dc2626;border-radius:var(--border-radius-md);cursor:${isEspImpersonating() ? 'not-allowed' : 'pointer'};opacity:${isEspImpersonating() ? '0.5' : '1'};white-space:nowrap;" onmouseover="if(!this.disabled)this.style.opacity=0.85" onmouseout="if(!this.disabled)this.style.opacity=1">
+          ${isEspImpersonating() ? '🕵️ Impersonating…' : 'Pay ' + performCost + ' ECO — Impersonate'}
+        </button>
+      </div>
     </div>
 
     <!-- ── Clear Fog of War ── -->
