@@ -1905,6 +1905,15 @@ window.populateWorkbookFromFirebaseData = populateWorkbookFromFirebaseData;
           Scans every player's owned provinces and adds any missing exports derived from <em>original_export</em>. Safe to run multiple times — won't duplicate existing entries.
         </div>
 
+        <div class="auto-sub-title">Border Detection (Ray-Cast)</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;">
+          <button id="adminRebuildBordersBtn" onclick="adminRebuildBorders()" style="padding:8px 16px;font-family:inherit;font-size:13px;font-weight:500;color:#fff;background:#1D4ED8;border:none;border-radius:var(--border-radius-md);cursor:pointer;">🗺 Rebuild Borders (Ray-Cast)</button>
+          <span id="adminRebuildBordersStatus" style="font-size:12px;color:var(--color-text-tertiary);"></span>
+        </div>
+        <div style="font-size:12px;color:var(--color-text-tertiary);margin-bottom:16px;">
+          For each trade-node province, shoots rays at 0°→359° (1° steps) from its SVG centre. The first province each ray touches becomes a border neighbour. Updates live border data and lets you copy the JSON to make it permanent. Open the <strong>Map tab first</strong> so the SVG is loaded.
+        </div>
+
         <div class="auto-sub-title">Add Sea Crossing</div>
         <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px;">
           <div><label class="auto-label">Province 1</label><select id="seaCrossingProv1" style="padding:8px;font-family:inherit;font-size:13px;border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);min-width:140px;"></select></div>
@@ -2323,8 +2332,21 @@ var ADMIN_NATION_NAME = 'Jackson';
 function isAdminNation(n) {
   if (!n) return false;
   var full = ((n.first_name || '') + ' ' + (n.surname || '')).trim();
-  return full.toLowerCase() === ADMIN_NATION_NAME.toLowerCase() ||
-         (n.first_name || '').trim().toLowerCase() === ADMIN_NATION_NAME.toLowerCase();
+  // Match by the dedicated admin nation name
+  if (full.toLowerCase() === ADMIN_NATION_NAME.toLowerCase() ||
+      (n.first_name || '').trim().toLowerCase() === ADMIN_NATION_NAME.toLowerCase()) return true;
+  // Also treat any nation whose assigned email is an admin email as an admin nation
+  // (catches auto-created rows like nc.171268@... → player "nc 171..." etc.)
+  if (full && typeof userAssignments !== 'undefined') {
+    var adminEmails = ADMIN_EMAIL.map(function(e){ return e.toLowerCase(); });
+    var assignments = userAssignments || {};
+    var matchedEmail = Object.keys(assignments).find(function(email) {
+      return adminEmails.indexOf(email.toLowerCase()) >= 0 &&
+             assignments[email].trim().toLowerCase() === full.toLowerCase();
+    });
+    if (matchedEmail) return true;
+  }
+  return false;
 }
 
 // Always read live from Firebase Auth — never trust a JS variable
@@ -71250,6 +71272,176 @@ function getBorderingProvs(candidateProvNums, attackerProvinceNumbers) {
   });
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// RAY-CAST BORDER DETECTION
+// For each province that has a trade_node, shoots rays from its SVG centre
+// at 0°, 1°, 2° … 359°.  The first province hit by each ray is a neighbour.
+// This overwrites PROVINCE_NEIGHBOURS with live geometry data and returns a
+// JSON string you can paste back into the const to make it permanent.
+// ══════════════════════════════════════════════════════════════════════════════
+function rebuildNeighboursRayCast(opts) {
+  opts = opts || {};
+  var stepDeg   = opts.stepDeg   || 1;     // angular step in degrees
+  var rayLen    = opts.rayLen    || 2000;  // ray length in SVG units
+  var onProgress = opts.onProgress || null;
+  var svg = mapSvgEl || document.querySelector('#mapContainer svg');
+  if (!svg) { console.error('rebuildNeighboursRayCast: no SVG found'); return null; }
+
+  // Build set of province numbers that have a trade_node
+  var tradeNodeProvNums = new Set();
+  (workingProvinces && workingProvinces.length ? workingProvinces : provincesData).forEach(function(pr) {
+    var tn = String(pr.trade_nodes || '').trim();
+    if (tn && tn !== '—' && tn !== '0' && tn !== '') {
+      tradeNodeProvNums.add(parseInt(pr.number));
+    }
+  });
+
+  if (!tradeNodeProvNums.size) {
+    // Fallback: use ALL provinces
+    Object.keys(PROVINCE_SVG_MAP).forEach(function(k) { tradeNodeProvNums.add(parseInt(k)); });
+  }
+
+  // Build SVG-id → province number reverse map
+  var idToNum = {};
+  Object.keys(PROVINCE_SVG_MAP).forEach(function(numStr) {
+    PROVINCE_SVG_MAP[numStr].forEach(function(id) { idToNum[id] = parseInt(numStr); });
+  });
+
+  // Get the SVG's CTM so we can convert SVG coords → screen coords
+  var svgRect = svg.getBoundingClientRect();
+
+  function svgToScreen(svgPt) {
+    // Use createSVGPoint for accurate transform
+    var pt = svg.createSVGPoint();
+    pt.x = svgPt.x; pt.y = svgPt.y;
+    var screenPt = pt.matrixTransform(svg.getScreenCTM());
+    return screenPt;
+  }
+
+  // New neighbours object — seed with existing keys so non-trade-node provinces keep their data
+  var newNeighbours = {};
+  Object.keys(PROVINCE_NEIGHBOURS).forEach(function(k) {
+    newNeighbours[k] = PROVINCE_NEIGHBOURS[k].slice();
+  });
+
+  var provNums = Array.from(tradeNodeProvNums);
+  var total = provNums.length;
+  var done = 0;
+
+  function addNeighbour(svgIdA, svgIdB) {
+    if (svgIdA === svgIdB) return;
+    if (!newNeighbours[svgIdA]) newNeighbours[svgIdA] = [];
+    if (newNeighbours[svgIdA].indexOf(svgIdB) < 0) newNeighbours[svgIdA].push(svgIdB);
+    // Symmetric
+    if (!newNeighbours[svgIdB]) newNeighbours[svgIdB] = [];
+    if (newNeighbours[svgIdB].indexOf(svgIdA) < 0) newNeighbours[svgIdB].push(svgIdA);
+  }
+
+  function processProvince(provNum) {
+    var svgIds = PROVINCE_SVG_MAP[provNum];
+    if (!svgIds || !svgIds.length) return;
+    var center = getProvinceCenter(provNum);
+    if (!center) return;
+    var screenCenter = svgToScreen(center);
+
+    for (var deg = 0; deg < 360; deg += stepDeg) {
+      var rad = deg * Math.PI / 180;
+      // Target point in SVG space
+      var tx = center.x + Math.cos(rad) * rayLen;
+      var ty = center.y + Math.sin(rad) * rayLen;
+      var screenTarget = svgToScreen({ x: tx, y: ty });
+
+      // Cast the ray in screen space using elementFromPoint at intervals
+      // We step along the ray and take the FIRST element that belongs to a different province
+      var hitEl = null;
+      var hitId = null;
+      var steps = 20;
+      for (var s = 1; s <= steps; s++) {
+        var frac = s / steps;
+        var px = screenCenter.x + (screenTarget.x - screenCenter.x) * frac;
+        var py = screenCenter.y + (screenTarget.y - screenCenter.y) * frac;
+        // Clamp to viewport
+        if (px < 0 || py < 0 || px > window.innerWidth || py > window.innerHeight) break;
+        var el = document.elementFromPoint(px, py);
+        if (!el) continue;
+        var id = el.id;
+        if (!id) { el = el.closest('[id]'); id = el ? el.id : null; }
+        if (!id) continue;
+        var hitNum = idToNum[id];
+        if (hitNum === undefined) continue;
+        if (hitNum !== provNum) {
+          // First province we hit that isn't us
+          hitId = id;
+          hitEl = el;
+          break;
+        }
+      }
+      if (!hitId) continue;
+      // Record the border between the source SVG shapes and the hit shape
+      svgIds.forEach(function(srcId) { addNeighbour(srcId, hitId); });
+    }
+  }
+
+  // Run synchronously (blocks UI — only called from admin)
+  provNums.forEach(function(provNum, i) {
+    processProvince(provNum);
+    done++;
+    if (onProgress && i % 10 === 0) onProgress(done, total);
+  });
+
+  // Also ensure bidirectional symmetry for all entries
+  Object.keys(newNeighbours).forEach(function(id) {
+    newNeighbours[id].forEach(function(nId) {
+      if (!newNeighbours[nId]) newNeighbours[nId] = [];
+      if (newNeighbours[nId].indexOf(id) < 0) newNeighbours[nId].push(id);
+    });
+  });
+
+  // Overwrite the live PROVINCE_NEIGHBOURS in place
+  Object.keys(PROVINCE_NEIGHBOURS).forEach(function(k) { delete PROVINCE_NEIGHBOURS[k]; });
+  Object.keys(newNeighbours).forEach(function(k) { PROVINCE_NEIGHBOURS[k] = newNeighbours[k]; });
+
+  return JSON.stringify(newNeighbours, null, 2);
+}
+window.rebuildNeighboursRayCast = rebuildNeighboursRayCast;
+
+// Admin UI wrapper — runs in background with progress and offers to copy the output
+function adminRebuildBorders() {
+  var btn = document.getElementById('adminRebuildBordersBtn');
+  var status = document.getElementById('adminRebuildBordersStatus');
+  if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+  if (status) status.textContent = 'Casting rays…';
+  // Run on next tick so the UI can update
+  setTimeout(function() {
+    try {
+      var result = rebuildNeighboursRayCast({
+        stepDeg: 1,
+        onProgress: function(done, total) {
+          if (status) status.textContent = 'Processed ' + done + ' / ' + total + ' trade-node provinces…';
+        }
+      });
+      if (btn) { btn.disabled = false; btn.textContent = '🗺 Rebuild Borders (Ray-Cast)'; }
+      if (result) {
+        if (status) status.innerHTML = '✅ Done — ' + Object.keys(PROVINCE_NEIGHBOURS).length + ' SVG shapes updated. ' +
+          '<button onclick="navigator.clipboard.writeText(window._lastBorderJson||String())" ' +
+          'style="padding:2px 8px;font-size:11px;font-family:inherit;background:#1D4ED8;color:#fff;border:none;border-radius:4px;cursor:pointer;">Copy JSON</button>';
+        window._lastBorderJson = result;
+        addToLog('Rebuilt PROVINCE_NEIGHBOURS via ray-cast (' + Object.keys(PROVINCE_NEIGHBOURS).length + ' shapes)');
+      } else {
+        if (status) status.textContent = '⚠ No SVG found — open the Map tab first.';
+        if (btn) { btn.disabled = false; btn.textContent = '🗺 Rebuild Borders (Ray-Cast)'; }
+      }
+    } catch(e) {
+      if (btn) { btn.disabled = false; btn.textContent = '🗺 Rebuild Borders (Ray-Cast)'; }
+      if (status) status.textContent = '❌ Error: ' + e.message;
+      console.error('adminRebuildBorders:', e);
+    }
+  }, 50);
+}
+window.adminRebuildBorders = adminRebuildBorders;
+
+
+
 const PROVINCE_SVG_MAP = {
   1: ['Alaska_US'],
   2: ['Northwest_Territories_CA','Nunavut_CA','Yukon_CA'],
@@ -72097,7 +72289,7 @@ function renderMap() {
     styleEl.id = 'mapDynamicStyles';
     document.head.appendChild(styleEl);
   }
-  styleEl.textContent = '';
+  // Don't clear yet — we'll only overwrite when new rules are ready (prevents flash)
 
   var playerColors = mapPlayerColors;
   var allianceColors = mapAllianceColors;
@@ -72307,7 +72499,11 @@ function renderMap() {
     });
   }
 
-  styleEl.textContent = cssRules.join('\n');
+  // Only update the stylesheet if the rules actually changed (prevents redundant repaints & flash)
+  var _newRules = cssRules.join('\n');
+  if (styleEl.textContent !== _newRules) {
+    styleEl.textContent = _newRules;
+  }
   applyMapHighlightClasses();
 
   // ── Apply / remove .stale-intel class on SVG paths ──
