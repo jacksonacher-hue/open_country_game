@@ -2806,7 +2806,7 @@ function renderActionsTab() {
     contentEl.innerHTML =
       '<div style="margin-top:16px;padding:24px;background:var(--color-background-secondary);border:1px solid var(--color-border-primary);border-radius:var(--border-radius-lg);max-width:520px;">' +
         '<div style="font-size:15px;font-weight:700;color:var(--color-accent);margin-bottom:4px;">🏰 Create Your Nation</div>' +
-        '<div style="font-size:12px;color:var(--color-text-tertiary);margin-bottom:18px;">You have not been assigned a player yet. Enter a name and claim 3 unowned starting provinces.</div>' +
+        '<div style="font-size:12px;color:var(--color-text-tertiary);margin-bottom:18px;">You have not been assigned a player yet. Enter a name and claim 8 unowned starting provinces.</div>' +
         '<div style="display:grid;gap:12px;">' +
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
             '<div><label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--color-text-tertiary);margin-bottom:4px;">First Name</label>' +
@@ -2815,9 +2815,9 @@ function renderActionsTab() {
             '<input id="selfRegSurname" type="text" placeholder="e.g. Smith" style="width:100%;box-sizing:border-box;padding:8px 10px;font-family:inherit;font-size:13px;border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);"></div>' +
           '</div>' +
           '<div>' +
-            '<label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--color-text-tertiary);margin-bottom:4px;">Starting Provinces — pick exactly 3 (Ctrl/Cmd+click)</label>' +
+            '<label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--color-text-tertiary);margin-bottom:4px;">Starting Provinces — pick exactly 8 (Ctrl/Cmd+click)</label>' +
             '<select id="selfRegProvinces" multiple size="8" style="width:100%;padding:6px 8px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">' + provOpts + '</select>' +
-            '<div id="selfRegProvCount" style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px;">0 / 3 selected</div>' +
+            '<div id="selfRegProvCount" style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px;">0 / 8 selected</div>' +
           '</div>' +
           '<div id="selfRegError" style="display:none;padding:10px 12px;background:var(--color-background-danger);border:1px solid rgba(248,113,113,0.4);border-radius:var(--border-radius-md);font-size:12px;font-weight:600;color:#f87171;"></div>' +
           '<button onclick="selfRegisterPlayer()" style="padding:10px 20px;font-family:inherit;font-size:13px;font-weight:600;color:#fff;background:#6366f1;border:none;border-radius:var(--border-radius-md);cursor:pointer;">🚀 Create Nation &amp; Claim Provinces</button>' +
@@ -2827,7 +2827,7 @@ function renderActionsTab() {
     if (sel) sel.addEventListener('change', function() {
       var cnt = Array.from(this.options).filter(function(o){return o.selected;}).length;
       var countEl = document.getElementById('selfRegProvCount');
-      if (countEl) { countEl.textContent = cnt + ' / 3 selected'; countEl.style.color = cnt === 3 ? '#4ade80' : 'var(--color-text-tertiary)'; }
+      if (countEl) { countEl.textContent = cnt + ' / 8 selected'; countEl.style.color = cnt === 8 ? '#4ade80' : 'var(--color-text-tertiary)'; }
     });
     return;
   }
@@ -2835,6 +2835,34 @@ function renderActionsTab() {
   // ── Game start date lockout: nation created but game not yet live ──
   // (Admins bypass this so they can test actions any time)
   if (!isGameStarted() && !isAdminUser()) {
+    // Count how many provinces this player owns
+    var _myName = (p ? (p.first_name + ' ' + p.surname).trim() : '') || assigned;
+    var _myProvCount = workingProvinces.filter(function(pr) {
+      return getPlayerOwnership(pr, _myName) >= 50;
+    }).length;
+    var _need = Math.max(0, 8 - _myProvCount);
+
+    var _extraHtml = '';
+    if (_need > 0) {
+      // Show province picker to claim remaining slots
+      var _unowned = workingProvinces.filter(function(pr) {
+        return ['owner1','owner2','owner3','owner4'].every(function(k){ return !pr[k] || pr[k].trim() === ''; });
+      }).sort(function(a,b){ return parseInt(a.number)-parseInt(b.number); });
+      var _provOpts = _unowned.map(function(pr) {
+        return '<option value="' + esc(String(pr.number)) + '">#' + esc(String(pr.number)) + ' ' + esc(pr.suffix || pr.prefix || '') + '</option>';
+      }).join('');
+      _extraHtml =
+        '<div style="margin-top:24px;padding:20px;background:var(--color-background-secondary);border:1px solid var(--color-border-primary);border-radius:var(--border-radius-lg);max-width:480px;text-align:left;">' +
+          '<div style="font-size:13px;font-weight:700;color:#facc15;margin-bottom:6px;">⚠ You only have ' + _myProvCount + ' / 8 starting provinces</div>' +
+          '<div style="font-size:12px;color:var(--color-text-tertiary);margin-bottom:12px;">Choose ' + _need + ' additional unowned province' + (_need !== 1 ? 's' : '') + ' before the game starts.</div>' +
+          '<label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--color-text-tertiary);margin-bottom:4px;">Available Provinces (Ctrl/Cmd+click to multi-select)</label>' +
+          '<select id="claimExtraProvinces" multiple size="8" style="width:100%;padding:6px 8px;font-family:\'IBM Plex Mono\',monospace;font-size:12px;border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);">' + _provOpts + '</select>' +
+          '<div id="claimExtraCount" style="font-size:11px;color:var(--color-text-tertiary);margin:4px 0 10px;">0 / ' + _need + ' selected</div>' +
+          '<div id="claimExtraError" style="display:none;padding:8px 10px;background:var(--color-background-danger);border:1px solid rgba(248,113,113,0.4);border-radius:var(--border-radius-md);font-size:12px;font-weight:600;color:#f87171;margin-bottom:8px;"></div>' +
+          '<button onclick="claimAdditionalProvinces(' + _need + ')" style="padding:9px 20px;font-family:inherit;font-size:13px;font-weight:600;color:#fff;background:#16a34a;border:none;border-radius:var(--border-radius-md);cursor:pointer;">✅ Claim Selected Provinces</button>' +
+        '</div>';
+    }
+
     var remaining = _gameStartTs - Date.now();
     contentEl.innerHTML =
       '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 24px;gap:20px;text-align:center;">' +
@@ -2846,7 +2874,18 @@ function renderActionsTab() {
           _formatCountdown(remaining) +
         '</div>' +
         '<div style="font-size:11px;color:var(--color-text-tertiary);">days · hours · minutes · seconds</div>' +
+        _extraHtml +
       '</div>';
+
+    // Wire up the province picker counter if it was rendered
+    var _sel = document.getElementById('claimExtraProvinces');
+    if (_sel) {
+      _sel.addEventListener('change', function() {
+        var cnt = Array.from(this.options).filter(function(o){ return o.selected; }).length;
+        var el = document.getElementById('claimExtraCount');
+        if (el) { el.textContent = cnt + ' / ' + _need + ' selected'; el.style.color = cnt === _need ? '#4ade80' : 'var(--color-text-tertiary)'; }
+      });
+    }
     return;
   }
 
@@ -74594,7 +74633,7 @@ async function selfRegisterPlayer() {
   var showErr = function(msg) { if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; } };
   if (!firstName || !surname) { showErr('Enter both a first name and surname.'); return; }
   var chosen = selEl ? Array.from(selEl.options).filter(function(o){return o.selected;}).map(function(o){return parseInt(o.value);}) : [];
-  if (chosen.length !== 3) { showErr('Select exactly 3 starting provinces.'); return; }
+  if (chosen.length !== 8) { showErr('Select exactly 8 starting provinces.'); return; }
   var fullName = firstName + ' ' + surname;
   var existing = workingNations.find(function(n){ return (n.first_name+' '+n.surname).trim().toLowerCase() === fullName.toLowerCase(); });
   if (existing) { showErr('A nation with that name already exists. Choose a different name.'); return; }
@@ -74658,6 +74697,54 @@ async function selfRegisterPlayer() {
   renderActionsTab();
 }
 window.selfRegisterPlayer = selfRegisterPlayer;
+
+async function claimAdditionalProvinces(need) {
+  var selEl  = document.getElementById('claimExtraProvinces');
+  var errEl  = document.getElementById('claimExtraError');
+  var showErr = function(msg) { if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; } };
+  if (errEl) errEl.style.display = 'none';
+
+  var chosen = selEl ? Array.from(selEl.options).filter(function(o){ return o.selected; }).map(function(o){ return parseInt(o.value); }) : [];
+  if (chosen.length !== need) { showErr('Select exactly ' + need + ' province' + (need !== 1 ? 's' : '') + '.'); return; }
+
+  var user = window.firebaseAuth.currentUser;
+  if (!user) { showErr('Not logged in.'); return; }
+
+  var assignedIdx = findAssignedPlayerIdx();
+  if (assignedIdx < 0) { showErr('No nation assigned to your account.'); return; }
+
+  await performActionWithRefresh('Claim additional starting provinces', function() {
+    var nation = workingNations[assignedIdx];
+    var fullName = (nation.first_name + ' ' + nation.surname).trim();
+    var _addedExports = [];
+
+    chosen.forEach(function(provNum) {
+      var pr = workingProvinces.find(function(p){ return parseInt(p.number) === provNum; });
+      if (!pr) return;
+      // Only claim if genuinely unowned
+      var alreadyOwned = ['owner1','owner2','owner3','owner4'].some(function(k){ return pr[k] && pr[k].trim() !== ''; });
+      if (alreadyOwned) return;
+      pr.starting_player = fullName;
+      ['owner1','owner2','owner3','owner4'].forEach(function(k){ pr[k] = ''; });
+      pr.owner1 = fullName;
+      var exportItem = getExportItemFromProvince(pr);
+      if (exportItem && !parseExports(nation.exports).items.some(function(e){
+        return normalizeName(e.name) === normalizeName(String(pr.original_export).trim());
+      })) {
+        nation.exports = nation.exports ? nation.exports + ', ' + exportItem : exportItem;
+        _addedExports.push(String(pr.original_export).trim());
+      }
+    });
+
+    syncTradeNodes();
+    updateWorkingNationProvinceStats();
+    syncWorkingDataToSheets();
+    refreshAutoDropdowns();
+    addToLog(fullName + ' claimed additional starting provinces #' + chosen.join(', #') + (_addedExports.length ? ' (exports: ' + _addedExports.join(', ') + ')' : ''));
+  });
+  renderActionsTab();
+}
+window.claimAdditionalProvinces = claimAdditionalProvinces;
 
 window.createPlayer = createPlayer;
 window.assignStartingProvinces = assignStartingProvinces;
