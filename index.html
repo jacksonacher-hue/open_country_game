@@ -78706,7 +78706,7 @@ var BOT = {
   playerName: '',
 
   // HF model — any instruct model on HF Inference API
-  model: 'mistralai/Mistral-7B-Instruct-v0.3',
+  model: 'mistralai/mistral-7b-instruct:free',  // OpenRouter free tier model
 
   // How often the bot acts (ms) — default 3 hours
   intervalMs: 3 * 60 * 60 * 1000,
@@ -78829,36 +78829,41 @@ async function buildContext(playerName) {
 // ── Call HuggingFace ──────────────────────────────────────────────────────────
 async function callHF(prompt) {
   var key = getKey();
-  if (!key) throw new Error('No HF API key set. Enter it in the 🤖 panel.');
+  if (!key) throw new Error('No API key set. Enter your OpenRouter key in the 🤖 panel.');
 
-  var url = 'https://api-inference.huggingface.co/models/' + BOT.model + '/v1/chat/completions';
-  log('Calling HF:', BOT.model);
+  // OpenRouter — browser-safe CORS, free tier, same models as HuggingFace
+  var url = 'https://openrouter.ai/api/v1/chat/completions';
+  log('Calling OpenRouter model:', BOT.model);
   log('Prompt length:', prompt.length, 'chars');
 
   var resp = await fetch(url, {
     method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+    headers: {
+      'Authorization': 'Bearer ' + key,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': window.location.origin,
+      'X-Title': 'Open Country Game Bot',
+    },
     body: JSON.stringify({
       model: BOT.model,
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 500,
       temperature: 0.85,
-      stream: false,
     }),
   });
 
-  log('HF response status:', resp.status);
+  log('API response status:', resp.status);
   var raw = await resp.text();
-  log('HF raw response:', raw.slice(0, 300));
+  log('API raw response:', raw.slice(0, 500));
 
-  if (!resp.ok) throw new Error('HF API error ' + resp.status + ': ' + raw.slice(0,200));
+  if (!resp.ok) throw new Error('API error ' + resp.status + ': ' + raw.slice(0, 300));
 
   var data = JSON.parse(raw);
   var text = (data.choices && data.choices[0] && data.choices[0].message)
-    ? data.choices[0].message.content
-    : (data[0] && data[0].generated_text) ? data[0].generated_text : '';
+    ? data.choices[0].message.content : '';
 
-  log('LLM text output:', text.slice(0, 400));
+  if (!text) throw new Error('Empty response from API. Full response: ' + raw.slice(0,300));
+  log('LLM output:', text.slice(0, 400));
   return text;
 }
 
@@ -79243,9 +79248,9 @@ function injectBotAdminPanel() {
 
     // HF Key
     '<div style="margin-bottom:10px;">' +
-      '<div style="color:#888;font-size:10px;margin-bottom:3px;text-transform:uppercase;">HuggingFace API Key</div>' +
+      '<div style="color:#888;font-size:10px;margin-bottom:3px;text-transform:uppercase;">OpenRouter API Key</div>' +
       '<div style="display:flex;gap:6px;">' +
-        '<input id="aiBotKey" type="password" placeholder="hf_..." value="' + (getKey()||'') + '" ' +
+        '<input id="aiBotKey" type="password" placeholder="sk-or-..." value="' + (getKey()||'') + '" ' +
           'style="flex:1;padding:6px;background:#111;border:1px solid #333;border-radius:6px;color:#fff;font-family:inherit;font-size:11px;">' +
         '<button onclick="window._botSaveKey()" style="padding:6px 10px;background:#7c3aed;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Save</button>' +
       '</div>' +
