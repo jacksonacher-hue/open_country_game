@@ -78868,8 +78868,8 @@ async function callHF(prompt) {
     body: JSON.stringify({
       model: BOT.model,
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 500,
-      temperature: 0.85,
+      max_tokens: 1024,
+      temperature: 0.7,
     }),
   });
 
@@ -78901,8 +78901,8 @@ async function callHF(prompt) {
       body: JSON.stringify({
         model: BOT.model,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 500,
-        temperature: 0.85,
+        max_tokens: 1024,
+        temperature: 0.7,
       }),
     });
     raw = await resp.text();
@@ -78927,15 +78927,24 @@ async function callHF(prompt) {
 
 // ── Parse JSON from LLM response ─────────────────────────────────────────────
 function parseResponse(text) {
-  // Strip markdown fences
-  text = text.replace(/```json/g,'').replace(/```/g,'').trim();
-  var match = text.match(/\{[\s\S]*\}/);
+  // Strip markdown fences and thinking tags
+  text = text.replace(/```json/g,'').replace(/```/g,'')
+    .replace(/<think>[\s\S]*?<\/think>/g,'')
+    .trim();
+  // Find the LAST { ... } block — reasoning models often preamble before the JSON
+  var match = text.match(/\{[\s\S]*\}(?=[^}]*$)/);
+  if (!match) match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('No JSON found in: ' + text.slice(0,200));
-  try {
-    return JSON.parse(match[0]);
-  } catch(e) {
-    throw new Error('JSON parse failed: ' + e.message + '\nRaw: ' + match[0].slice(0,200));
+  // Try progressively shorter matches if parse fails (model may have trailed off)
+  var attempts = [match[0]];
+  // Also try from last { to last }
+  var lastOpen = text.lastIndexOf('{');
+  var lastClose = text.lastIndexOf('}');
+  if (lastOpen >= 0 && lastClose > lastOpen) attempts.unshift(text.slice(lastOpen, lastClose+1));
+  for (var i = 0; i < attempts.length; i++) {
+    try { return JSON.parse(attempts[i]); } catch(e) {}
   }
+  throw new Error('JSON parse failed. Raw: ' + match[0].slice(0,200));
 }
 
 // ── Build prompt ──────────────────────────────────────────────────────────────
@@ -78959,8 +78968,9 @@ function buildPrompt(ctx) {
     '- leave_alliance: {"type":"leave_alliance","alliance_name":"..."}\n' +
     '- request_province: {"type":"request_province","province":"Province Name or #number"} — stake a claim on an unclaimed province\n' +
     '- no_action: {"type":"no_action"}\n\n' +
-    'Respond with ONLY valid JSON, no extra text:\n' +
-    '{"reasoning":"one sentence why","actions":[...1 to 3 actions...]}';
+    'IMPORTANT: You must output ONLY a raw JSON object. No thinking, no explanation, no markdown. Start your response with { and end with }\n\n' +
+    'Example output:\n' +
+    '{"reasoning":"Expanding influence by sending a diplomatic message","actions":[{"type":"send_chat","message":"A.P.E.X. systems online. Calculating optimal strategy."}]}';
 }
 
 // ── Execute a single action ───────────────────────────────────────────────────
