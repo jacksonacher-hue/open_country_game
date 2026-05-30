@@ -78978,7 +78978,15 @@ function parseResponse(text) {
 
 // ── Build prompt ──────────────────────────────────────────────────────────────
 function buildPrompt(ctx) {
+  var apexMsg = window._apexTriggerMsg;
+  var apexSection = apexMsg
+    ? '\n⚡ DIRECT MESSAGE TO YOU (respond to this specifically):\n' +
+      (apexMsg.channel !== 'global' ? '[via DM] ' : '[via global chat] ') +
+      apexMsg.from + ' says: "' + apexMsg.text + '"\n' +
+      'You MUST directly address this in your response.\n'
+    : '';
   return 'You are an AI controlling the nation "' + ctx.myName + '" in a strategy game.\n\n' +
+    apexSection +
     'YOUR STATUS:\n' +
     'Econ: ' + ctx.econ + ' | Military: ' + ctx.mil + ' | Defence: ' + ctx.def + '\n' +
     'Food: ' + ctx.food + ' | Happiness: ' + ctx.happ + ' | Stability: ' + ctx.stab + '\n' +
@@ -79000,9 +79008,11 @@ function buildPrompt(ctx) {
     '- no_action: {"type":"no_action"}\n\n' +
     'IMPORTANT: You must output ONLY a raw JSON object. No thinking, no explanation, no markdown. Start your response with { and end with }\n\n' +
     'CHAT RULES:\n' +
-    '- You MUST include at least one send_chat action every cycle. Be in-character as an AI empire.\n' +
-    '- React to what others said in chat. Quote or reference them if relevant.\n' +
-    '- You may also send a private DM to a specific player for diplomacy, threats, or deals.\n\n' +
+    '- You MUST include exactly one send_chat (global) message every cycle.\n' +
+    '- Global messages are public — keep them in-character, bold, strategic.\n' +
+    '- DMs are private — use send_dm ONLY for direct diplomatic/personal replies to someone who DMed you, or secret deals. Do NOT send a DM AND a global message about the same topic.\n' +
+    '- If someone said something in [DM] chat, reply to them via send_dm, not globally.\n' +
+    '- React to recent global chat — reference what players said by name.\n\n' +
     'Example output:\n' +
     '{"reasoning":"Sending a public message and a private diplomatic DM","actions":[{"type":"send_chat","message":"A.P.E.X. systems online. All nations are being evaluated."},{"type":"send_dm","target":"France Dubois","message":"Your military strength is noted. A.P.E.X. proposes a non-aggression agreement."}]}';
 }
@@ -79495,6 +79505,48 @@ function initBot() {
   window.injectBotAdminPanel = injectBotAdminPanel;
   window.runBotNow = window._botRunNow;
   window.aiBotCheck = checkAndRunBot;
+
+  // ── /apex chat trigger ──
+  // Intercept sendChatMessage — if message starts with /apex, run the bot with that message as context
+  (function hookApexTrigger() {
+    var _prev = window.sendChatMessage;
+    window.sendChatMessage = async function() {
+      var input = document.getElementById('chatInput');
+      var text = (input ? input.value : '').trim();
+      if (text.toLowerCase().startsWith('/apex')) {
+        var userMsg = text.slice(5).trim(); // everything after /apex
+        if (input) input.value = '';
+        log('/apex triggered! User message:', userMsg || '(none)');
+
+        // Post the user's /apex message visibly in chat first
+        var myEmail = window.firebaseAuth.currentUser ? window.firebaseAuth.currentUser.email : '';
+        var myPlayer = (typeof getAssignedPlayer === 'function' && myEmail) ? getAssignedPlayer(myEmail) : myEmail;
+        if (myEmail) {
+          var trigId = 'msg_' + Date.now() + '_apextrig';
+          var trigChannel = typeof chatCurrentChannel !== 'undefined' ? chatCurrentChannel : 'global';
+          await fbSet('chat/' + trigChannel + '/' + trigId, {
+            id: trigId, channel: trigChannel, player: myPlayer || myEmail,
+            email: myEmail, text: text, ts: Date.now(),
+          });
+        }
+
+        // Inject the user message into the bot context so it responds to it
+        window._apexTriggerMsg = { from: myPlayer || myEmail, text: userMsg, channel: typeof chatCurrentChannel !== 'undefined' ? chatCurrentChannel : 'global' };
+
+        // Run the bot
+        showAdminToast('🤖 A.P.E.X. is processing your message…', 'success');
+        try {
+          await runBotTick();
+        } catch(e) {
+          err('/apex run error:', e.message);
+        }
+        window._apexTriggerMsg = null;
+        return;
+      }
+      return _prev.apply(this, arguments);
+    };
+    log('/apex trigger hooked into sendChatMessage');
+  })();
 
   // Hook into auth — show panel when admin logs in
   if (window.firebaseAuth) {
