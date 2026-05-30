@@ -78782,6 +78782,13 @@ function findPlayerIdx(name) {
 async function buildContext(playerName) {
   log('Building context for:', playerName);
 
+  // Log what email A.P.E.X. resolves to — if blank, admin needs to assign the player an email
+  var resolvedEmail = (typeof getAssignedEmailForName === 'function') ? getAssignedEmailForName(playerName) : '';
+  log('Bot player email from userAssignments:', resolvedEmail || '(NONE — player needs an email assigned in Firebase)');
+  if (!resolvedEmail) {
+    showAdminToast('⚠ A.P.E.X. has no assigned email — chat will appear as admin until you assign one in userAssignments', 'error');
+  }
+
   var idx = findPlayerIdx(playerName);
   if (idx < 0) { err('Player not found in workingNations:', playerName); return null; }
 
@@ -79004,6 +79011,16 @@ function buildPrompt(ctx) {
 async function execAction(action, ctx) {
   var playerName = ctx.myName;
   var idx = ctx.myIdx;
+  // Always resolve the bot's OWN email from userAssignments — never use currentUser
+  var botEmail = (typeof getAssignedEmailForName === 'function')
+    ? (getAssignedEmailForName(playerName) || '').toLowerCase()
+    : '';
+  if (!botEmail) {
+    log('WARNING: no email assigned to player "' + playerName + '" in userAssignments. Chat will appear as admin.');
+    log('userAssignments:', JSON.stringify(window.userAssignments || {}));
+  } else {
+    log('Bot email resolved to:', botEmail);
+  }
   log('Executing:', action.type, JSON.stringify(action));
 
   switch(action.type) {
@@ -79011,9 +79028,7 @@ async function execAction(action, ctx) {
     case 'send_chat': {
       var msg = String(action.message||'').trim();
       if (!msg) { log('send_chat: empty message, skipping'); return; }
-      var botEmail = (typeof getAssignedEmailForName === 'function' && getAssignedEmailForName(playerName))
-        || (window.firebaseAuth.currentUser && window.firebaseAuth.currentUser.email) || 'bot';
-      log('Sending global chat as:', playerName, '(', botEmail, ')');
+      log('Sending global chat as player:', playerName, 'email:', botEmail);
       var id = 'msg_' + Date.now() + '_bot';
       await fbSet('chat/global/' + id, {
         id: id, channel: 'global', player: playerName, email: botEmail,
@@ -79027,16 +79042,17 @@ async function execAction(action, ctx) {
       var msg = String(action.message||'').trim();
       var target = String(action.target||'').trim();
       if (!msg || !target) { log('send_dm: missing message or target'); return; }
-      var botEmail = (typeof getAssignedEmailForName === 'function' && getAssignedEmailForName(playerName))
-        || (window.firebaseAuth.currentUser && window.firebaseAuth.currentUser.email) || '';
+      // Don't DM yourself
+      if (target.toLowerCase() === playerName.toLowerCase()) { log('send_dm: cannot DM self'); return; }
       var targetEmail = (typeof getAssignedEmailForName === 'function' && getAssignedEmailForName(target)) || '';
-      if (!botEmail || !targetEmail) { log('send_dm: could not resolve emails. bot:', botEmail, 'target:', targetEmail); return; }
-      // Build DM channel ID same way the game does
-      var channelId = 'dm_' + [botEmail.toLowerCase(), targetEmail.toLowerCase()].sort().join('__').replace(/[@.]/g, '_');
-      log('Sending DM to:', target, '(', targetEmail, ') channel:', channelId);
+      if (!botEmail) { log('send_dm: bot has no assigned email — cannot send DM'); return; }
+      if (!targetEmail) { log('send_dm: no email for target:', target, '— skipping DM'); return; }
+      // Build DM channel ID exactly as the game does
+      var channelId = 'dm_' + [botEmail, targetEmail.toLowerCase()].sort().join('__').replace(/[@.]/g, '_');
+      log('Sending DM as:', playerName, '(', botEmail, ') to:', target, '(', targetEmail, ') ch:', channelId);
       var id = 'msg_' + Date.now() + '_botdm';
       await fbSet('chat/' + channelId + '/' + id, {
-        id: id, channel: channelId, player: playerName, email: botEmail.toLowerCase(),
+        id: id, channel: channelId, player: playerName, email: botEmail,
         text: msg, ts: Date.now(),
       });
       log('DM sent to', target, ':', msg);
@@ -79083,17 +79099,16 @@ async function execAction(action, ctx) {
       if (!target) return;
       var targetEmail = getAssignedEmailForName(target);
       if (!targetEmail) { log('request_alliance: no email for', target); return; }
-      var myEmail = (window.firebaseAuth.currentUser && window.firebaseAuth.currentUser.email)||'';
       var req = {
         id: 'req_'+Date.now()+'_bot',
         type: 'alliance',
-        fromEmail: myEmail, fromPlayer: playerName,
-        targetEmails: [myEmail, targetEmail.toLowerCase()],
+        fromEmail: botEmail, fromPlayer: playerName,
+        targetEmails: [botEmail, targetEmail.toLowerCase()],
         targetPlayers: [playerName, target],
         allianceName: alName,
         status: 'pending', acceptStatus: {}, createdAt: Date.now(),
       };
-      req.acceptStatus[myEmail.replace(/\./g,'_')] = 'accepted';
+      req.acceptStatus[botEmail.replace(/\./g,'_')] = 'accepted';
       req.acceptStatus[targetEmail.toLowerCase().replace(/\./g,'_')] = 'pending';
       var existing = await fbGet('playerRequests') || {};
       existing[req.id] = req;
@@ -79188,9 +79203,8 @@ async function execAction(action, ctx) {
       });
       // Also send a chat message as the bot
       var chatId = 'msg_' + Date.now() + '_botprov';
-      var botEmail2 = (typeof getAssignedEmailForName === 'function' && getAssignedEmailForName(playerName)) || '';
       await fbSet('chat/global/' + chatId, {
-        id: chatId, channel: 'global', player: playerName, email: botEmail2,
+        id: chatId, channel: 'global', player: playerName, email: botEmail,
         text: 'The empire of ' + playerName + ' lays claim to ' + (pr.suffix||pr.prefix||'province #'+pr.number) + '. We await formal recognition.',
         ts: Date.now(),
       });
