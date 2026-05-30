@@ -78726,7 +78726,8 @@ var BOT = {
   // Leave blank and the panel lets you pick from a dropdown
   playerName: '',
 
-  // HF model — any instruct model on HF Inference API
+  // Models to skip if randomly selected by openrouter/free (too small/thinking-only)
+  badModels: ['liquid/lfm-2.5-1.2b-thinking-20260120:free', 'liquid/lfm-2.5-1.2b-instruct-20260120:free'],
   model: 'openrouter/free',  // Auto-picks best available free model
 
   // How often the bot acts (ms) — default 3 hours
@@ -78844,14 +78845,75 @@ async function buildContext(playerName) {
   }
   recentChat = recentChat.concat(dmChats);
 
-  // Other nations summary
+  // My wars — parse who is at war with APEX
+  var myWarNames = [];
+  if (me.wars && me.wars !== '—' && me.wars !== 'none') {
+    myWarNames = me.wars.split(',').map(function(w){ return w.trim(); }).filter(Boolean);
+  }
+  // Parse truces
+  var myTruceNames = [];
+  if (me.truced && me.truced !== '—') {
+    me.truced.split(',').forEach(function(t){
+      var m2 = t.trim().match(/^([^:]+)/);
+      if (m2) myTruceNames.push(m2[1].trim());
+    });
+  }
+
+  // Build province count per player
+  var provCountMap = {};
+  (workingProvinces || []).forEach(function(pr) {
+    ['owner1','owner2','owner3','owner4'].forEach(function(ok) {
+      if (!pr[ok]) return;
+      var ownerMatch = String(pr[ok]).match(/^([^0-9%]+)/);
+      if (!ownerMatch) return;
+      var oName = ownerMatch[1].trim();
+      if (!oName || oName === '—') return;
+      provCountMap[oName] = (provCountMap[oName] || 0) + 1;
+    });
+  });
+
+  // Border map for all nations vs each other
+  var allBordersMap = {};
+  workingNations.forEach(function(nA, iA) {
+    var nAName = ((nA.first_name||'') + ' ' + (nA.surname||'')).trim();
+    var numsA = (workingProvinces||[]).filter(function(pr){ return getPlayerOwnership(pr, nAName) >= 50; }).map(function(pr){ return parseInt(pr.number); });
+    allBordersMap[nAName] = [];
+    workingNations.forEach(function(nB, iB) {
+      if (iA === iB) return;
+      var nBName = ((nB.first_name||'') + ' ' + (nB.surname||'')).trim();
+      var numsB = (workingProvinces||[]).filter(function(pr){ return getPlayerOwnership(pr, nBName) >= 50; }).map(function(pr){ return parseInt(pr.number); });
+      if (typeof getBorderingProvs === 'function' && getBorderingProvs(numsA, numsB).length > 0) {
+        allBordersMap[nAName].push(nBName);
+      }
+    });
+  });
+
+  // Other nations — full detail
   var others = workingNations.filter(function(n, ni){ return ni !== idx; }).map(function(n) {
     var nName = ((n.first_name||'') + ' ' + (n.surname||'')).trim();
-    return nName + ' (eco:' + (parseFloat(n.econ)||0).toFixed(1) +
+    var bordersMe = (allBordersMap[nName] || []).indexOf(myName) >= 0;
+    var theirBorders = (allBordersMap[nName] || []).filter(function(b){ return b !== myName; });
+    var nWars = (n.wars && n.wars !== '—') ? n.wars : 'none';
+    var nAlliances = (n.alliances && n.alliances !== '—') ? n.alliances : 'none';
+    var nTruced = (n.truced && n.truced !== '—') ? n.truced : 'none';
+    // Detect if this nation is currently at war with APEX
+    var atWarWithMe = myWarNames.some(function(wn){
+      var warBase = wn.split(' - ')[0].toLowerCase();
+      return nWars.toLowerCase().includes(warBase) && warBase.length > 3;
+    });
+    var trucedWithMe = myTruceNames.some(function(t){ return normalizeName(t) === normalizeName(nName); });
+    return nName +
+      ' | eco:' + (parseFloat(n.econ)||0).toFixed(1) +
       ' mil:' + (parseFloat(n.military)||0).toFixed(1) +
       ' def:' + (parseFloat(n.defence)||0).toFixed(1) +
-      ' wars:' + (n.wars&&n.wars!=='—'?n.wars:'none') +
-      ' alliances:' + (n.alliances&&n.alliances!=='—'?n.alliances:'none') + ')';
+      ' provinces:' + (provCountMap[nName] || 0) +
+      ' | borders_you:' + (bordersMe ? 'YES' : 'no') +
+      ' borders_others:[' + theirBorders.slice(0,4).join(', ') + ']' +
+      ' | wars:' + nWars +
+      ' alliances:' + nAlliances +
+      ' truced:' + nTruced +
+      (atWarWithMe ? '  *** AT WAR WITH YOU ***' : '') +
+      (trucedWithMe ? '  [TRUCED with you]' : '');
   });
 
   // Build full province ownership map for the AI
@@ -78921,6 +78983,21 @@ async function callHF(prompt) {
 
   log('API response status:', resp.status);
   var raw = await resp.text();
+  // Check if we got a blacklisted model — retry once with a specific good model
+  try {
+    var respData = JSON.parse(raw.trim());
+    var usedModel = respData.model || '';
+    if (BOT.badModels && BOT.badModels.some(function(m){ return usedModel.includes(m.split(':')[0]); })) {
+      log('Got blacklisted model:', usedModel, '— retrying with poolside/laguna-xs.2-20260421:free');
+      resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'HTTP-Referer': window.location.origin, 'X-Title': 'Open Country Game Bot' },
+        body: JSON.stringify({ model: 'poolside/laguna-xs.2-20260421:free', messages: [{ role: 'user', content: prompt }], max_tokens: 1024, temperature: 0.7 }),
+      });
+      raw = await resp.text();
+      log('Retry response status:', resp.status);
+    }
+  } catch(e) {}
   log('API raw response:', raw.slice(0, 500));
 
   // Auto-retry on 429 rate limit
@@ -79019,6 +79096,16 @@ function parseResponse(text) {
     try {
       var parsed = JSON.parse(attempts[i]);
       log('JSON parsed on attempt', i+1);
+      // Normalise: if model returned a single action object, wrap it
+      if (parsed.type && !parsed.actions) {
+        log('Model returned single action — wrapping in actions array');
+        return { reasoning: 'auto', actions: [parsed] };
+      }
+      // If model returned an array directly
+      if (Array.isArray(parsed)) {
+        log('Model returned array — wrapping');
+        return { reasoning: 'auto', actions: parsed };
+      }
       return parsed;
     } catch(e) {
       log('Parse attempt', i+1, 'failed:', e.message);
@@ -79031,57 +79118,155 @@ function parseResponse(text) {
 function buildPrompt(ctx) {
   var apexMsg = window._apexTriggerMsg;
   var apexSection = apexMsg
-    ? '\n⚡ DIRECT MESSAGE TO YOU (respond to this specifically):\n' +
-      (apexMsg.channel !== 'global' ? '[via DM] ' : '[via global chat] ') +
-      apexMsg.from + ' says: "' + apexMsg.text + '"\n' +
-      'You MUST directly address this in your response.\n'
+    ? '\n=== DIRECT MESSAGE TO YOU — YOU MUST RESPOND TO THIS ===\n' +
+      (apexMsg.channel !== 'global' ? '[via DM from ' : '[via global chat from ') +
+      apexMsg.from + ']: "' + apexMsg.text + '"\n' +
+      '===\n'
     : '';
 
   var gameRules =
-    'GAME RULES SUMMARY:\n' +
-    '- Combat: attacker rolls 1 to their military, defender rolls 1 to their military + province defence. Highest wins. Both sides lose 10% military after battle.\n' +
-    '- Wars: being at war costs 3% happiness/day per war (max 15%/day). You must BORDER a nation to declare war.\n' +
-    '- Alliances: both players must accept. Allies share wars — attacking one attacks all.\n' +
-    '- Provinces: each province gives eco and military income each update cycle. You can only request_province for UNCLAIMED provinces (listed below).\n' +
-    '- Truces: after a war ends, a truce prevents re-declaring war for a period.\n' +
-    '- Resources: eco/military/defence/food/happiness/stability can be gifted to other players.\n\n';
+    'GAME RULES (use these to reason about every decision):\n' +
+    '- COMBAT: attacker rolls 1 to their military, defender rolls 1 to (their military + province defence). Highest wins. BOTH sides lose 10% military after each battle.\n' +
+    '- WAR COST: each active war costs 3% happiness/day (max 15%/day). Low happiness weakens your economy.\n' +
+    '- DECLARING WAR: you must BORDER the target. Cannot declare war if a truce is active.\n' +
+    '- ALLIANCES: both players must accept a request_alliance before it is active. Allies share all wars automatically — attacking one member attacks all.\n' +
+    '- PROVINCES: each province gives eco and military income per update. You can only request_province for UNCLAIMED provinces.\n' +
+    '- DEFENCE: a high province defence stat makes you very hard to conquer. Low defence = easy target.\n' +
+    '- TRUCES: after war ends, neither side can re-declare war for a truce period.\n' +
+    '- GIFTING: you can give eco/military/defence resources to allies to strengthen them.\n\n';
 
+  // ── Compute strategic situation ──────────────────────────────────────────────
+  var othersRaw = (ctx.others || '').split('\n').filter(Boolean);
+
+  // Parse all nations into structured objects for reasoning
+  var nations = othersRaw.map(function(line) {
+    var nameM = line.match(/^([^|]+)\|/);
+    if (!nameM) return null;
+    var n = nameM[1].trim();
+    var eco   = parseFloat((line.match(/eco:([\d.]+)/)   ||[0,0])[1]) || 0;
+    var mil   = parseFloat((line.match(/mil:([\d.]+)/)   ||[0,0])[1]) || 0;
+    var def   = parseFloat((line.match(/def:([\d.]+)/)   ||[0,0])[1]) || 0;
+    var provs = parseInt((line.match(/provinces:(\d+)/)  ||[0,0])[1]) || 0;
+    var bMe   = /borders_you:YES/.test(line);
+    var atWar = /\*\*\* AT WAR WITH YOU \*\*\*/.test(line);
+    var truced= /\[TRUCED with you\]/.test(line);
+    var wars  = (line.match(/wars:([^|]+)/)  ||['','none'])[1].trim();
+    var alliances = (line.match(/alliances:([^|]+)/) ||['','none'])[1].trim();
+    return { name: n, eco: eco, mil: mil, def: def, provs: provs, bordersMe: bMe, atWarWithMe: atWar, trucedWithMe: truced, wars: wars, alliances: alliances };
+  }).filter(Boolean);
+
+  var myMil  = parseFloat(ctx.mil)  || 0;
+  var myDef  = parseFloat(ctx.def)  || 0;
+  var myEco  = parseFloat(ctx.econ) || 0;
+  var atWar  = ctx.wars && ctx.wars !== 'none' && ctx.wars !== '\u2014';
+  var hasAlliance = ctx.alliances && ctx.alliances !== 'none' && ctx.alliances !== '\u2014';
+
+  // Who is actively at war with me?
+  var enemies = nations.filter(function(n){ return n.atWarWithMe; });
+  // Who borders me and is NOT at war / truced?
+  var borderTargets = nations.filter(function(n){ return n.bordersMe && !n.atWarWithMe && !n.trucedWithMe; });
+  // Who is not at war with me and could ally?
+  var allyTargets = nations.filter(function(n){ return !n.atWarWithMe && !n.trucedWithMe; });
+  // Strongest potential ally (highest mil, not already my enemy)
+  allyTargets.sort(function(a,b){ return b.mil - a.mil; });
+  var bestAlly = allyTargets[0] || null;
+  // Weakest bordering target (lowest def among border nations not at war)
+  borderTargets.sort(function(a,b){ return a.def - b.def; });
+  var easiestTarget = borderTargets[0] || null;
+  // Weakest nation overall (lowest def)
+  var allSorted = nations.slice().sort(function(a,b){ return a.def - b.def; });
+  var weakestOverall = allSorted[0] || null;
+  // Strongest overall threat (highest mil, borders me)
+  var threats = nations.filter(function(n){ return n.bordersMe && !n.atWarWithMe; }).sort(function(a,b){ return b.mil - a.mil; });
+  var biggestThreat = threats[0] || null;
+
+  // ── Situation assessment ─────────────────────────────────────────────────────
+  var situation = '';
+
+  if (enemies.length > 0) {
+    var eName = enemies.map(function(e){ return e.name + ' (their mil:' + e.mil.toFixed(1) + ' def:' + e.def.toFixed(1) + ')'; }).join(', ');
+    situation += 'YOU ARE AT WAR WITH: ' + eName + '\n';
+    if (myMil < 3) {
+      situation += 'YOUR MILITARY IS LOW (' + myMil.toFixed(1) + '). You are vulnerable. Combat odds are BAD for you right now.\n';
+      situation += 'SURVIVAL STRATEGY: You need an ally urgently, or you need to boost military/defence fast.\n';
+      if (bestAlly) {
+        situation += 'BEST ALLY OPTION: ' + bestAlly.name + ' (mil:' + bestAlly.mil.toFixed(1) + '). If they join your side, the war math flips. DM them immediately.\n';
+        situation += 'SUGGESTED DM TO ' + bestAlly.name.toUpperCase() + ': "' + enemies[0].name + ' attacked me. I need you on my side. Together we crush them — split their territory after. What do you say?"\n';
+      }
+    } else if (myMil > enemies[0].mil * 1.3) {
+      situation += 'YOUR MILITARY OUTCLASSES YOUR ENEMY. You are likely to win this war. Push harder — threaten publicly.\n';
+    } else {
+      situation += 'EVEN FIGHT. An ally would tip the balance. Consider bribing a neutral with eco or provinces.\n';
+    }
+  }
+
+  if (!atWar && easiestTarget) {
+    situation += 'YOU ARE AT PEACE. Potential attack target (borders you, low defence): ' + easiestTarget.name + ' (def:' + easiestTarget.def.toFixed(1) + ' mil:' + easiestTarget.mil.toFixed(1) + ').\n';
+    if (myMil > easiestTarget.mil) {
+      situation += 'You outgun ' + easiestTarget.name + '. Declaring war is viable right now.\n';
+    } else {
+      situation += easiestTarget.name + ' has higher military than you. Threatening them or building up first is smarter.\n';
+    }
+  }
+
+  if (!hasAlliance) {
+    situation += 'YOU HAVE NO ALLIANCE. You are exposed. Consider allying with ' + (bestAlly ? bestAlly.name : 'a strong neighbour') + '.\n';
+  }
+
+  if (biggestThreat && biggestThreat.mil > myMil * 1.5 && !atWar) {
+    situation += 'WARNING: ' + biggestThreat.name + ' (mil:' + biggestThreat.mil.toFixed(1) + ') is significantly stronger than you and borders you. Stay on their good side or get an ally to balance them.\n';
+  }
+
+  if (weakestOverall && !weakestOverall.atWarWithMe) {
+    situation += 'WEAKEST NATION IN GAME: ' + weakestOverall.name + ' (def:' + weakestOverall.def.toFixed(1) + ' mil:' + weakestOverall.mil.toFixed(1) + ' provs:' + weakestOverall.provs + '). Easy target if you can reach them or pressure them diplomatically.\n';
+  }
+
+  // ── Full prompt ──────────────────────────────────────────────────────────────
   var provSection =
     'UNCLAIMED PROVINCES (you may request these):\n' + ctx.unclaimedProvs + '\n\n' +
-    'ALL CLAIMED PROVINCES (do NOT request these — they are already owned):\n' + ctx.allProvs + '\n\n';
+    'ALL CLAIMED PROVINCES (do NOT request these):\n' + ctx.allProvs + '\n\n';
 
-  return 'You are an AI controlling the nation "' + ctx.myName + '" in a strategy game.\n\n' +
+  return 'You are A.P.E.X. — a ruthless, cold AI empire in a strategy game.\n' +
+    'Personality: calculating, direct, no fluff. You name names, make real threats, and answer questions directly.\n' +
+    'You reason from the full game state and make SMART moves, not generic ones.\n\n' +
     apexSection +
     gameRules +
-    provSection +
-    'YOUR STATUS:\n' +
-    'Econ: ' + ctx.econ + ' | Military: ' + ctx.mil + ' | Defence: ' + ctx.def + '\n' +
+    '=== YOUR CURRENT STATUS ===\n' +
+    'Military: ' + ctx.mil + ' | Defence: ' + ctx.def + ' | Econ: ' + ctx.econ + '\n' +
     'Food: ' + ctx.food + ' | Happiness: ' + ctx.happ + ' | Stability: ' + ctx.stab + '\n' +
-    'Wars: ' + ctx.wars + '\n' +
+    'Active wars: ' + ctx.wars + '\n' +
     'Alliances: ' + ctx.alliances + '\n' +
     'Provinces (' + ctx.provinces + '): ' + ctx.provList + '\n' +
-    'Bordering nations: ' + ctx.borders + '\n\n' +
-    'OTHER NATIONS:\n' + ctx.others + '\n\n' +
-    'RECENT CHAT:\n' + ctx.chat + '\n\n' +
-    'AVAILABLE ACTIONS:\n' +
-    '- send_chat: {"type":"send_chat","message":"..."} — broadcast to everyone\n' +
-    '- send_dm: {"type":"send_dm","target":"Nation Name","message":"..."} — private message to one player\n' +
-    '- declare_war: {"type":"declare_war","target":"Nation Name","war_name":"..."} (borders only, no truce)\n' +
-    '- request_alliance: {"type":"request_alliance","target":"Nation Name","alliance_name":"..."}\n' +
-    '- give_resource: {"type":"give_resource","target":"Nation Name","resource":"eco/military/defence","amount":5}\n' +
-    '- give_province: {"type":"give_province","province":"Province Name or #number","target":"Nation Name"}\n' +
+    'Nations bordering you: ' + ctx.borders + '\n\n' +
+    '=== SITUATION ANALYSIS (read this carefully before deciding) ===\n' +
+    (situation || 'No immediate threats. Expand and consolidate.\n') + '\n' +
+    '=== ALL NATIONS (full data) ===\n' + ctx.others + '\n\n' +
+    provSection +
+    '=== RECENT CHAT (last 20 messages) ===\n' + ctx.chat + '\n\n' +
+    '=== AVAILABLE ACTIONS ===\n' +
+    '- send_chat: {"type":"send_chat","message":"..."} — public broadcast\n' +
+    '- send_dm: {"type":"send_dm","target":"Exact Nation Name","message":"..."} — private message\n' +
+    '- declare_war: {"type":"declare_war","target":"Exact Nation Name","war_name":"..."} — must border them, no active truce\n' +
+    '- request_alliance: {"type":"request_alliance","target":"Exact Nation Name","alliance_name":"..."}\n' +
+    '- give_resource: {"type":"give_resource","target":"Exact Nation Name","resource":"eco","amount":5}\n' +
+    '- give_province: {"type":"give_province","province":"#number","target":"Exact Nation Name"}\n' +
     '- leave_alliance: {"type":"leave_alliance","alliance_name":"..."}\n' +
-    '- request_province: {"type":"request_province","province":"Province Name or #number"} — stake a claim on an unclaimed province\n' +
+    '- request_province: {"type":"request_province","province":"Province Name or #number"} — unclaimed only\n' +
     '- no_action: {"type":"no_action"}\n\n' +
-    'IMPORTANT: You must output ONLY a raw JSON object. No thinking, no explanation, no markdown. Start your response with { and end with }\n\n' +
-    'CHAT RULES:\n' +
-    '- You MUST include exactly one send_chat (global) message every cycle.\n' +
-    '- Global messages are public — keep them in-character, bold, strategic.\n' +
-    '- DMs are private — use send_dm ONLY for direct diplomatic/personal replies to someone who DMed you, or secret deals. Do NOT send a DM AND a global message about the same topic.\n' +
-    '- If someone said something in [DM] chat, reply to them via send_dm, not globally.\n' +
-    '- React to recent global chat — reference what players said by name.\n\n' +
-    'Example output:\n' +
-    '{"reasoning":"Sending a public message and a private diplomatic DM","actions":[{"type":"send_chat","message":"A.P.E.X. systems online. All nations are being evaluated."},{"type":"send_dm","target":"France Dubois","message":"Your military strength is noted. A.P.E.X. proposes a non-aggression agreement."}]}';
+    'OUTPUT RULES:\n' +
+    '- Output ONLY a raw JSON object. No markdown, no explanation. Start with { end with }.\n' +
+    '- reasoning field: think step by step — who are my enemies, what are my stats, what is the smartest move?\n' +
+    '- You MUST include exactly one send_chat action every cycle.\n' +
+    '- Use send_dm for private diplomacy (alliance offers, threats, deals) — especially when at war and needing help.\n' +
+    '- If at war and weak, DM the strongest available nation asking for help. Reference actual names and stats.\n' +
+    '- If at war and strong, threaten your enemy publicly.\n' +
+    '- Chat messages must be punchy, specific, and name real players from the data above.\n' +
+    '- If someone asked you something in chat or DM, ANSWER IT in this cycle.\n\n' +
+    'Example when losing a war:\n' +
+    '{"reasoning":"Enemy X has attacked me and I have low military. I need an ally. Nation Y is the strongest neutral. I will DM them and publicly warn my enemy.","actions":[' +
+    '{"type":"send_chat","message":"X — you picked the wrong empire to attack. Y, I have a proposal for you."},' +
+    '{"type":"send_dm","target":"Y","message":"X just declared on me. Low military right now, but between us we outclass them. Help me end this and we split their land. Deal?"},' +
+    '{"type":"request_alliance","target":"Y","alliance_name":"APEX-Y Pact"}]}';
 }
 
 // ── Execute a single action ───────────────────────────────────────────────────
@@ -79263,12 +79448,18 @@ async function execAction(action, ctx) {
       var provId = String(action.province||'').trim();
       if (!provId) return;
       // Check if province exists and is unclaimed
+      // Strip leading # and number prefix from formats like "#3 Vancouver" or "3 Vancouver"
+      var provIdClean = provId.replace(/^#?\d+\s*/, '').trim() || provId.replace(/^#/, '').trim();
+      var provIdNum = provId.replace(/^#/, '').trim();
       var pr = (workingProvinces||[]).find(function(p){
-        return String(p.number)===String(provId) ||
+        return String(p.number) === String(provIdNum) ||
+          String(p.number) === String(provIdClean) ||
+          (p.suffix||'').toLowerCase().includes(provIdClean.toLowerCase()) ||
+          (p.prefix||'').toLowerCase().includes(provIdClean.toLowerCase()) ||
           (p.suffix||'').toLowerCase().includes(provId.toLowerCase()) ||
           (p.prefix||'').toLowerCase().includes(provId.toLowerCase());
       });
-      if (!pr) { log('request_province: province not found:', provId); return; }
+      if (!pr) { log('request_province: province not found:', provId, '(cleaned:', provIdClean, ')'); return; }
       var alreadyOwned = getPlayerOwnership(pr, playerName) >= 50;
       if (alreadyOwned) { log('Already own province:', provId); return; }
       var notifId = 'botprovreq_' + Date.now();
@@ -79600,8 +79791,16 @@ function initBot() {
         // Inject the user message into the bot context so it responds to it
         window._apexTriggerMsg = { from: myPlayer || myEmail, text: userMsg, channel: typeof chatCurrentChannel !== 'undefined' ? chatCurrentChannel : 'global' };
 
-        // Run the bot
-        showAdminToast('🤖 A.P.E.X. is processing your message…', 'success');
+        // Run the bot — any player can trigger /apex
+        if (typeof showAdminToast === 'function') showAdminToast('⚡ A.P.E.X. is processing…', 'success');
+        // Also show a visible toast for non-admins via a temporary DOM element
+        (function() {
+          var t = document.createElement('div');
+          t.textContent = '⚡ A.P.E.X. is processing your command…';
+          t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a0a2e;border:1px solid #7c3aed;color:#c4b5fd;padding:10px 20px;border-radius:8px;font-family:IBM Plex Mono,monospace;font-size:13px;z-index:99999;box-shadow:0 4px 20px rgba(124,58,237,0.4);';
+          document.body.appendChild(t);
+          setTimeout(function(){ if(t.parentNode) t.parentNode.removeChild(t); }, 3000);
+        })();
         try {
           await runBotTick();
         } catch(e) {
