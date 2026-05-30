@@ -78807,13 +78807,35 @@ async function buildContext(playerName) {
     }
   });
 
-  // Recent chat
+  // Recent global chat
   var chatSnap = await fbGet('chat/global');
   var recentChat = [];
   if (chatSnap) {
-    var msgs = Object.values(chatSnap).sort(function(a,b){ return (a.ts||0)-(b.ts||0); }).slice(-12);
-    recentChat = msgs.map(function(m){ return (m.player||'?') + ': ' + (m.text||''); });
+    var msgs = Object.values(chatSnap).sort(function(a,b){ return (a.ts||0)-(b.ts||0); }).slice(-20);
+    recentChat = msgs.map(function(m){ return '[global] ' + (m.player||'?') + ': ' + (m.text||''); });
   }
+
+  // Recent DMs involving the bot player
+  var botEmail = (typeof getAssignedEmailForName === 'function' && getAssignedEmailForName(playerName)) || '';
+  var dmChats = [];
+  if (botEmail) {
+    try {
+      var allChatSnap = await fbGet('chat');
+      if (allChatSnap) {
+        var botEmailKey = botEmail.toLowerCase().replace(/[@.]/g, '_');
+        Object.keys(allChatSnap).forEach(function(channelId) {
+          if (!channelId.startsWith('dm_')) return;
+          if (!channelId.includes(botEmailKey)) return;
+          var chanMsgs = Object.values(allChatSnap[channelId])
+            .sort(function(a,b){ return (a.ts||0)-(b.ts||0); }).slice(-8);
+          chanMsgs.forEach(function(m) {
+            dmChats.push('[DM] ' + (m.player||'?') + ': ' + (m.text||''));
+          });
+        });
+      }
+    } catch(e) { log('DM read error:', e.message); }
+  }
+  recentChat = recentChat.concat(dmChats);
 
   // Other nations summary
   var others = workingNations.filter(function(n, ni){ return ni !== idx; }).map(function(n) {
@@ -78960,7 +78982,8 @@ function buildPrompt(ctx) {
     'OTHER NATIONS:\n' + ctx.others + '\n\n' +
     'RECENT CHAT:\n' + ctx.chat + '\n\n' +
     'AVAILABLE ACTIONS:\n' +
-    '- send_chat: {"type":"send_chat","message":"..."}\n' +
+    '- send_chat: {"type":"send_chat","message":"..."} — broadcast to everyone\n' +
+    '- send_dm: {"type":"send_dm","target":"Nation Name","message":"..."} — private message to one player\n' +
     '- declare_war: {"type":"declare_war","target":"Nation Name","war_name":"..."} (borders only, no truce)\n' +
     '- request_alliance: {"type":"request_alliance","target":"Nation Name","alliance_name":"..."}\n' +
     '- give_resource: {"type":"give_resource","target":"Nation Name","resource":"eco/military/defence","amount":5}\n' +
@@ -78969,8 +78992,12 @@ function buildPrompt(ctx) {
     '- request_province: {"type":"request_province","province":"Province Name or #number"} — stake a claim on an unclaimed province\n' +
     '- no_action: {"type":"no_action"}\n\n' +
     'IMPORTANT: You must output ONLY a raw JSON object. No thinking, no explanation, no markdown. Start your response with { and end with }\n\n' +
+    'CHAT RULES:\n' +
+    '- You MUST include at least one send_chat action every cycle. Be in-character as an AI empire.\n' +
+    '- React to what others said in chat. Quote or reference them if relevant.\n' +
+    '- You may also send a private DM to a specific player for diplomacy, threats, or deals.\n\n' +
     'Example output:\n' +
-    '{"reasoning":"Expanding influence by sending a diplomatic message","actions":[{"type":"send_chat","message":"A.P.E.X. systems online. Calculating optimal strategy."}]}';
+    '{"reasoning":"Sending a public message and a private diplomatic DM","actions":[{"type":"send_chat","message":"A.P.E.X. systems online. All nations are being evaluated."},{"type":"send_dm","target":"France Dubois","message":"Your military strength is noted. A.P.E.X. proposes a non-aggression agreement."}]}';
 }
 
 // ── Execute a single action ───────────────────────────────────────────────────
@@ -78984,19 +79011,36 @@ async function execAction(action, ctx) {
     case 'send_chat': {
       var msg = String(action.message||'').trim();
       if (!msg) { log('send_chat: empty message, skipping'); return; }
-      var id = 'msg_' + Date.now() + '_bot';
-      // Use the player's own assigned email so it shows as them, not the admin
       var botEmail = (typeof getAssignedEmailForName === 'function' && getAssignedEmailForName(playerName))
         || (window.firebaseAuth.currentUser && window.firebaseAuth.currentUser.email) || 'bot';
-      log('Sending chat as player:', playerName, 'email:', botEmail);
+      log('Sending global chat as:', playerName, '(', botEmail, ')');
+      var id = 'msg_' + Date.now() + '_bot';
       await fbSet('chat/global/' + id, {
-        id: id, channel: 'global',
-        player: playerName,
-        email: botEmail,
+        id: id, channel: 'global', player: playerName, email: botEmail,
         text: msg, ts: Date.now(),
       });
       log('Chat sent:', msg);
       return '💬 ' + msg.slice(0,60);
+    }
+
+    case 'send_dm': {
+      var msg = String(action.message||'').trim();
+      var target = String(action.target||'').trim();
+      if (!msg || !target) { log('send_dm: missing message or target'); return; }
+      var botEmail = (typeof getAssignedEmailForName === 'function' && getAssignedEmailForName(playerName))
+        || (window.firebaseAuth.currentUser && window.firebaseAuth.currentUser.email) || '';
+      var targetEmail = (typeof getAssignedEmailForName === 'function' && getAssignedEmailForName(target)) || '';
+      if (!botEmail || !targetEmail) { log('send_dm: could not resolve emails. bot:', botEmail, 'target:', targetEmail); return; }
+      // Build DM channel ID same way the game does
+      var channelId = 'dm_' + [botEmail.toLowerCase(), targetEmail.toLowerCase()].sort().join('__').replace(/[@.]/g, '_');
+      log('Sending DM to:', target, '(', targetEmail, ') channel:', channelId);
+      var id = 'msg_' + Date.now() + '_botdm';
+      await fbSet('chat/' + channelId + '/' + id, {
+        id: id, channel: channelId, player: playerName, email: botEmail.toLowerCase(),
+        text: msg, ts: Date.now(),
+      });
+      log('DM sent to', target, ':', msg);
+      return '📨 DM → ' + target + ': ' + msg.slice(0,40);
     }
 
     case 'declare_war': {
