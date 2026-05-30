@@ -78912,9 +78912,14 @@ async function callHF(prompt) {
   if (!resp.ok) throw new Error('API error ' + resp.status + ': ' + raw.slice(0, 300));
 
   var data = JSON.parse(raw);
-  var text = (data.choices && data.choices[0] && data.choices[0].message)
-    ? data.choices[0].message.content : '';
-
+  var msg = data.choices && data.choices[0] && data.choices[0].message;
+  // Handle reasoning models (content is null, answer is in reasoning field)
+  var text = (msg && msg.content) || (msg && msg.reasoning) || '';
+  // Last resort: grab JSON directly from raw if model embedded it
+  if (!text) {
+    var m = raw.match(/\{"reasoning"[\s\S]*?\}/);
+    if (m) text = m[0];
+  }
   if (!text) throw new Error('Empty response from API. Full response: ' + raw.slice(0,300));
   log('LLM output:', text.slice(0, 400));
   return text;
