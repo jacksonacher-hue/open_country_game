@@ -78689,4 +78689,1169 @@ try { Object.freeze(renderEspionageAdminAccessList); } catch(e) {}
 try { Object.freeze(renderEspionageAdminCentersList); } catch(e) {}
 })();
 
+
+
+// ═══════════════════════════════════════════
+// AI PLAYER MODULE — injected
+// ═══════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ██████╗  ██████╗ ████████╗     █████╗ ██╗    ██████╗ ██╗      █████╗ ██╗   ██╗███████╗██████╗
+// ██╔══██╗██╔═══██╗╚══██╔══╝    ██╔══██╗██║    ██╔══██╗██║     ██╔══██╗╚██╗ ██╔╝██╔════╝██╔══██╗
+// ██████╔╝██║   ██║   ██║       ███████║██║    ██████╔╝██║     ███████║ ╚████╔╝ █████╗  ██████╔╝
+// ██╔══██╗██║   ██║   ██║       ██╔══██║██║    ██╔═══╝ ██║     ██╔══██║  ╚██╔╝  ██╔══╝  ██╔══██╗
+// ██████╔╝╚██████╔╝   ██║       ██║  ██║██║    ██║     ███████╗██║  ██║   ██║   ███████╗██║  ██║
+// ╚═════╝  ╚═════╝    ╚═╝       ╚═╝  ╚═╝╚═╝    ╚═╝     ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
+//
+// AI PLAYER MODULE  ·  Powered by Hugging Face Inference API
+// Drop this entire block just before the closing <\/script> tag in index.html
+// ═══════════════════════════════════════════════════════════════════════════════
+
+(function() {
+'use strict';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ██████╗  ██████╗ ███╗   ██╗███████╗██╗ ██████╗
+// ██╔════╝██╔═══██╗████╗  ██║██╔════╝██║██╔════╝
+// ██║     ██║   ██║██╔██╗ ██║█████╗  ██║██║  ███╗
+// ██║     ██║   ██║██║╚██╗██║██╔══╝  ██║██║   ██║
+// ╚██████╗╚██████╔╝██║ ╚████║██║     ██║╚██████╔╝
+//  ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝     ╚═╝ ╚═════╝
+// ─────────────────────────────────────────────────────────────────────────────
+
+const AI_BOT_CONFIG = {
+  // ── REQUIRED: set your Hugging Face API key here ──
+  HF_API_KEY: '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',
+
+  // ── Hugging Face model. Must support conversational/instruction tuning ──
+  // Good free options: mistralai/Mistral-7B-Instruct-v0.3
+  //                    meta-llama/Meta-Llama-3-8B-Instruct
+  //                    HuggingFaceH4/zephyr-7b-beta
+  HF_MODEL: 'mistralai/Mistral-7B-Instruct-v0.3',
+
+  // ── Firebase auth: the email/pass the AI logs in with ──
+  BOT_EMAIL: 'aibot@gmail.com',    // must be a registered Firebase account
+  BOT_PASSWORD: 'plsdontwin',
+
+  // ── How often the bot wakes up (ms). Default: 3 hours ──
+  INTERVAL_MS: 3 * 60 * 60 * 1000,
+
+  // ── Firebase key where bot state is stored ──
+  FB_KEY: 'aiBotState',
+
+  // ── Max chat messages the bot reads for context ──
+  CHAT_CONTEXT_MSGS: 15,
+
+  // ── Debug: log AI reasoning to console ──
+  DEBUG: true,
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function aiLog() {
+  if (!AI_BOT_CONFIG.DEBUG) return;
+  var args = Array.prototype.slice.call(arguments);
+  args.unshift('[🤖 AI BOT]');
+  console.log.apply(console, args);
+}
+
+function aiError() {
+  var args = Array.prototype.slice.call(arguments);
+  args.unshift('[🤖 AI BOT ❌]');
+  console.error.apply(console, args);
+}
+
+function getNow() { return Date.now(); }
+
+async function fbGet(path) {
+  var snap = await window.firebaseGet(window.firebaseRef(window.firebaseDb, path));
+  return snap.exists() ? snap.val() : null;
+}
+
+async function fbSet(path, val) {
+  return window.firebaseSet(window.firebaseRef(window.firebaseDb, path), val);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOT STATE  (stored in Firebase so it persists across sessions/reloads)
+// ─────────────────────────────────────────────────────────────────────────────
+
+var _botState = null;  // loaded lazily
+
+async function loadBotState() {
+  _botState = await fbGet(AI_BOT_CONFIG.FB_KEY) || {};
+  return _botState;
+}
+
+async function saveBotState(patch) {
+  _botState = Object.assign(_botState || {}, patch);
+  await fbSet(AI_BOT_CONFIG.FB_KEY, _botState);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIGN IN AS BOT
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function botSignIn() {
+  try {
+    aiLog('Signing in as bot…');
+    var cred = await window.firebaseAuth.signInWithEmailAndPassword(
+      AI_BOT_CONFIG.BOT_EMAIL,
+      AI_BOT_CONFIG.BOT_PASSWORD
+    );
+    aiLog('Signed in:', cred.user.email);
+    return cred.user;
+  } catch(e) {
+    aiError('Sign-in failed:', e.message);
+    throw e;
+  }
+}
+
+async function botSignOut() {
+  try { await window.firebaseAuth.signOut(); } catch(e) {}
+  aiLog('Signed out.');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COLLECT GAME CONTEXT
+// (reads live Firebase data — same sources the UI uses)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function collectGameContext(botPlayerName) {
+  // Refresh the live data snapshot
+  var weeksSnap = await fbGet('weeks');
+  if (!weeksSnap) return null;
+
+  // Pick the latest week
+  var weekKeys = Object.keys(weeksSnap).sort();
+  var latestWeekKey = weekKeys[weekKeys.length - 1];
+  var latestWeek = weeksSnap[latestWeekKey];
+
+  var nations = latestWeek.nations || [];
+  var provinces = latestWeek.provinces || [];
+
+  // Find bot's nation
+  var myNation = nations.find(function(n) {
+    var full = ((n.first_name || '') + ' ' + (n.surname || '')).trim();
+    return full.toLowerCase() === botPlayerName.toLowerCase();
+  });
+
+  // Build other nations summary (what's visible — all nations)
+  var otherNations = nations.filter(function(n) {
+    var full = ((n.first_name || '') + ' ' + (n.surname || '')).trim();
+    return full.toLowerCase() !== botPlayerName.toLowerCase();
+  }).map(function(n) {
+    var full = ((n.first_name || '') + ' ' + (n.surname || '')).trim();
+    return {
+      name: full,
+      econ: n.econ,
+      military: n.military,
+      defence: n.defence,
+      alliances: n.alliances,
+      wars: n.wars,
+    };
+  });
+
+  // Get bordering provinces/nations
+  var myProvinces = [];
+  var myProvNums = [];
+  if (myNation) {
+    var myName = ((myNation.first_name || '') + ' ' + (myNation.surname || '')).trim();
+    provinces.forEach(function(pr) {
+      var owners = [pr.owner1, pr.owner2, pr.owner3, pr.owner4].filter(Boolean).join(' ');
+      if (owners.toLowerCase().includes(myName.toLowerCase())) {
+        myProvinces.push(pr);
+        myProvNums.push(parseInt(pr.number));
+      }
+    });
+  }
+
+  // Bordering nations (share a province border with me)
+  var borderingNations = [];
+  if (typeof getBorderingProvs === 'function' && myProvNums.length) {
+    otherNations.forEach(function(on) {
+      var theirNums = [];
+      provinces.forEach(function(pr) {
+        var owners = [pr.owner1, pr.owner2, pr.owner3, pr.owner4].filter(Boolean).join(' ');
+        if (owners.toLowerCase().includes(on.name.toLowerCase())) theirNums.push(parseInt(pr.number));
+      });
+      var borders = getBorderingProvs(theirNums, myProvNums);
+      if (borders.length) borderingNations.push(on.name);
+    });
+  }
+
+  // Recent chat messages (global channel)
+  var chatSnap = await fbGet('chat/global');
+  var recentMsgs = [];
+  if (chatSnap) {
+    var allMsgs = Object.values(chatSnap);
+    allMsgs.sort(function(a, b) { return (a.ts || 0) - (b.ts || 0); });
+    recentMsgs = allMsgs.slice(-AI_BOT_CONFIG.CHAT_CONTEXT_MSGS).map(function(m) {
+      return (m.player || m.email || '?') + ': ' + (m.text || '');
+    });
+  }
+
+  return {
+    weekKey: latestWeekKey,
+    myNation: myNation,
+    otherNations: otherNations,
+    myProvinces: myProvinces,
+    borderingNations: borderingNations,
+    recentChat: recentMsgs,
+    nations: nations,
+    provinces: provinces,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BUILD PROMPT FOR LLM
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildPrompt(ctx, botName) {
+  var me = ctx.myNation;
+  var myName = me ? ((me.first_name || '') + ' ' + (me.surname || '')).trim() : botName;
+
+  var myStats = me ? [
+    'Econ: ' + (parseFloat(me.econ) || 0).toFixed(1),
+    'Military: ' + (parseFloat(me.military) || 0).toFixed(1),
+    'Defence: ' + (parseFloat(me.defence) || 0).toFixed(1),
+    'Food: ' + (parseFloat(me.food) > 1 ? (parseFloat(me.food)).toFixed(0) : (parseFloat(me.food)*100).toFixed(0)) + '%',
+    'Happiness: ' + (parseFloat(me.happiness) > 1 ? (parseFloat(me.happiness)).toFixed(0) : (parseFloat(me.happiness)*100).toFixed(0)) + '%',
+    'Stability: ' + (parseFloat(me.stability) > 1 ? (parseFloat(me.stability)).toFixed(0) : (parseFloat(me.stability)*100).toFixed(0)) + '%',
+    'Alliances: ' + (me.alliances || 'none'),
+    'Wars: ' + (me.wars || 'none'),
+    'Provinces owned: ' + ctx.myProvinces.length,
+  ].join('\n') : 'No nation data loaded yet.';
+
+  var othersStr = ctx.otherNations.slice(0, 12).map(function(n) {
+    return '  • ' + n.name + ' — Eco:' + (parseFloat(n.econ)||0).toFixed(1) + ' Mil:' + (parseFloat(n.military)||0).toFixed(1) + ' Def:' + (parseFloat(n.defence)||0).toFixed(1) + ' Alliances:' + (n.alliances||'none') + ' Wars:' + (n.wars||'none');
+  }).join('\n');
+
+  var chatStr = ctx.recentChat.length ? ctx.recentChat.join('\n') : '(no recent chat)';
+  var bordersStr = ctx.borderingNations.length ? ctx.borderingNations.join(', ') : 'none detected';
+
+  var provStr = ctx.myProvinces.slice(0, 10).map(function(p) {
+    return (p.suffix || p.prefix || '#' + p.number) + ' (Eco+' + (p.econ_income||0) + ' Mil+' + (p.mil_income||0) + ')';
+  }).join(', ');
+
+  var prompt = `You are an autonomous AI player in a real-time nation strategy game called "Open Country Game". Your nation is named "${myName}". You act independently and must make strategic decisions every few hours based on the current game state.
+
+## YOUR NATION'S STATUS
+${myStats}
+Owned provinces: ${provStr || 'none'}
+Bordering nations: ${bordersStr}
+
+## ALL OTHER NATIONS
+${othersStr || 'No other nations found.'}
+
+## RECENT GLOBAL CHAT (last ${AI_BOT_CONFIG.CHAT_CONTEXT_MSGS} messages)
+${chatStr}
+
+## YOUR TASK
+Based on this information, decide what actions to take RIGHT NOW. You should be strategic, personality-driven, and unpredictable. Consider:
+- Your military vs economic strength relative to neighbours
+- Alliance opportunities with nearby, friendly nations
+- Threats from strong, warring neighbours
+- Whether to expand, consolidate, or build economy
+- How to respond to what people are saying in chat
+
+## AVAILABLE ACTIONS (you may perform 1–4 actions per cycle):
+
+1. send_chat(message) — Send a message in global chat as your nation. Be in-character.
+2. declare_war(target_nation, war_name) — Declare war. ONLY if you border them and have no truce. Must be strategic.
+3. request_alliance(target_nation, alliance_name) — Propose an alliance. Smart if both are peaceful.
+4. give_resource(target_nation, resource, amount) — Give eco/military/defence/food/happiness/stability to a nation. Good for allies.
+5. give_province(province_name_or_number, target_nation) — Cede a province you own to another.
+6. leave_alliance(alliance_name) — Leave an alliance you are in.
+7. no_action() — Do nothing this cycle if no action is strategically justified.
+
+## RULES
+- NEVER declare war on an ally.
+- NEVER declare war on a nation you have a truce with.
+- Only give away resources you actually have.
+- Only give provinces you own (listed above).
+- Alliances require both parties to accept — your request is only a proposal.
+- Be in character with your nation's personality (develop one!).
+- For declare_war, only target nations you border.
+
+## OUTPUT FORMAT
+Respond ONLY with a valid JSON object. No markdown, no explanation, no extra text. Example:
+{
+  "reasoning": "Brief internal reasoning (1-2 sentences)",
+  "actions": [
+    {"type": "send_chat", "message": "Greetings, rivals. ${myName} grows stronger every day."},
+    {"type": "declare_war", "target": "France Dubois", "war_name": "The Northern Conflict"}
+  ]
+}
+
+Valid action types: send_chat, declare_war, request_alliance, give_resource, give_province, leave_alliance, no_action.
+For give_resource: include "target", "resource" (eco/military/defence/food/happiness/stability), "amount" (number).
+For give_province: include "province" (name or number), "target".
+For request_alliance: include "target" (nation name), "alliance_name".
+For declare_war: include "target" (nation name), "war_name".
+For leave_alliance: include "alliance_name".
+`;
+
+  return prompt;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALL HUGGING FACE API
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function callHuggingFace(prompt) {
+  var url = 'https://api-inference.huggingface.co/models/' + AI_BOT_CONFIG.HF_MODEL + '/v1/chat/completions';
+
+  var body = {
+    model: AI_BOT_CONFIG.HF_MODEL,
+    messages: [
+      { role: 'user', content: prompt }
+    ],
+    max_tokens: 600,
+    temperature: 0.85,
+    stream: false,
+  };
+
+  aiLog('Calling HF API:', AI_BOT_CONFIG.HF_MODEL);
+
+  var resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + AI_BOT_CONFIG.HF_API_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    var errText = await resp.text();
+    throw new Error('HF API error ' + resp.status + ': ' + errText.slice(0, 200));
+  }
+
+  var data = await resp.json();
+
+  // Extract text from response
+  var text = '';
+  if (data.choices && data.choices[0] && data.choices[0].message) {
+    text = data.choices[0].message.content || '';
+  } else if (data[0] && data[0].generated_text) {
+    // Fallback for text-generation pipeline format
+    text = data[0].generated_text || '';
+  }
+
+  aiLog('Raw LLM response:', text);
+  return text;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PARSE LLM RESPONSE
+// ─────────────────────────────────────────────────────────────────────────────
+
+function parseLLMResponse(text) {
+  // Strip markdown fences if present
+  var cleaned = text.replace(/```json[\s\S]*?```/g, function(m) {
+    return m.replace(/```json/, '').replace(/```/, '');
+  }).replace(/```[\s\S]*?```/g, function(m) {
+    return m.replace(/```/g, '');
+  }).trim();
+
+  // Try to extract the first {...} JSON block
+  var match = cleaned.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON object found in LLM response');
+
+  try {
+    return JSON.parse(match[0]);
+  } catch(e) {
+    throw new Error('JSON parse failed: ' + e.message + ' — raw: ' + match[0].slice(0, 200));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXECUTE ACTIONS (as the bot player)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function executeBotActions(actions, ctx, botPlayerName) {
+  var log = [];
+
+  for (var i = 0; i < actions.length; i++) {
+    var action = actions[i];
+    aiLog('Executing action:', JSON.stringify(action));
+
+    try {
+      switch (action.type) {
+
+        // ── SEND CHAT ──────────────────────────────────────────────────────
+        case 'send_chat': {
+          var msg = String(action.message || '').trim();
+          if (!msg) break;
+          var chatId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+          await fbSet('chat/global/' + chatId, {
+            id: chatId,
+            channel: 'global',
+            player: botPlayerName,
+            email: AI_BOT_CONFIG.BOT_EMAIL,
+            text: msg,
+            ts: Date.now(),
+          });
+          log.push('💬 Chat: "' + msg.slice(0,60) + (msg.length>60?'…':'') + '"');
+          // Rate limit: wait a moment between chat messages
+          await sleep(1500);
+          break;
+        }
+
+        // ── DECLARE WAR ───────────────────────────────────────────────────
+        case 'declare_war': {
+          var target = String(action.target || '').trim();
+          var warName = String(action.war_name || 'Bot War ' + Date.now()).trim();
+          if (!target) break;
+
+          // Use the existing performDeclareWarAction logic by manipulating working data
+          var ok = await botDeclareWar(target, warName, ctx, botPlayerName);
+          if (ok) log.push('⚔ War declared on ' + target + ' (' + warName + ')');
+          break;
+        }
+
+        // ── REQUEST ALLIANCE ──────────────────────────────────────────────
+        case 'request_alliance': {
+          var target = String(action.target || '').trim();
+          var allianceName = String(action.alliance_name || botPlayerName + '-Alliance').trim();
+          if (!target) break;
+
+          var ok = await botRequestAlliance(target, allianceName, botPlayerName);
+          if (ok) log.push('🤝 Alliance request sent to ' + target + ' (' + allianceName + ')');
+          break;
+        }
+
+        // ── GIVE RESOURCE ─────────────────────────────────────────────────
+        case 'give_resource': {
+          var target = String(action.target || '').trim();
+          var resource = String(action.resource || 'eco').toLowerCase().trim();
+          var amount = parseFloat(action.amount) || 0;
+          if (!target || amount <= 0) break;
+
+          var ok = await botGiveResource(target, resource, amount, ctx, botPlayerName);
+          if (ok) log.push('🎁 Gave ' + amount + ' ' + resource + ' to ' + target);
+          break;
+        }
+
+        // ── GIVE PROVINCE ─────────────────────────────────────────────────
+        case 'give_province': {
+          var province = String(action.province || '').trim();
+          var target = String(action.target || '').trim();
+          if (!province || !target) break;
+
+          var ok = await botGiveProvince(province, target, ctx, botPlayerName);
+          if (ok) log.push('🏛 Ceded province ' + province + ' to ' + target);
+          break;
+        }
+
+        // ── LEAVE ALLIANCE ────────────────────────────────────────────────
+        case 'leave_alliance': {
+          var allianceName = String(action.alliance_name || '').trim();
+          if (!allianceName) break;
+
+          var ok = await botLeaveAlliance(allianceName, ctx, botPlayerName);
+          if (ok) log.push('🚪 Left alliance: ' + allianceName);
+          break;
+        }
+
+        // ── NO ACTION ─────────────────────────────────────────────────────
+        case 'no_action':
+          log.push('💤 No action taken this cycle.');
+          break;
+
+        default:
+          aiLog('Unknown action type:', action.type);
+      }
+    } catch(e) {
+      aiError('Action failed (' + action.type + '):', e.message);
+      log.push('❌ ' + action.type + ' failed: ' + e.message);
+    }
+
+    // Brief pause between actions
+    await sleep(1200);
+  }
+
+  return log;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACTION IMPLEMENTATIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function botDeclareWar(targetName, warName, ctx, botPlayerName) {
+  // Refresh workbook and use performActionWithRefresh pattern
+  try {
+    await refreshFirebaseOnce();
+
+    var idx = findBotPlayerIdx(botPlayerName);
+    if (idx < 0) { aiError('Bot player not found in workingNations'); return false; }
+
+    var targetIdx = workingNations.findIndex(function(n) {
+      return normalizeName(((n.first_name||'') + ' ' + (n.surname||'')).trim()) === normalizeName(targetName);
+    });
+    if (targetIdx < 0) { aiError('Target not found:', targetName); return false; }
+
+    // Border check
+    var attackerIds = getAllianceMemberIndices(idx);
+    var defenderIds = getAllianceMemberIndices(targetIdx);
+    if (!doesAllianceBorderOpposition(attackerIds, defenderIds)) {
+      aiLog('Cannot declare war — no border with ' + targetName);
+      return false;
+    }
+
+    // Truce check
+    var attacker = workingNations[idx];
+    var defender = workingNations[targetIdx];
+    var atTruce = parseTruces(attacker.truced || '').some(function(t) {
+      return normalizeName(t.name) === normalizeName(targetName);
+    });
+    if (atTruce) { aiLog('Cannot declare war — truce active with ' + targetName); return false; }
+
+    // Alliance conflict check
+    if (hasAllianceWarConflict(attackerIds, defenderIds)) {
+      aiLog('Already at war with target alliance'); return false;
+    }
+
+    return await performActionWithRefresh('Bot: Declare war vs ' + targetName, function() {
+      var an = workingNations[idx];
+      var dn = workingNations[targetIdx];
+      var atkIds = getAllianceMemberIndices(idx);
+      var defIds = getAllianceMemberIndices(targetIdx);
+      atkIds.forEach(function(i) {
+        var n = workingNations[i];
+        n.wars = (n.wars && n.wars.trim() && n.wars !== '—' ? n.wars + ', ' : '') + warName + ' - 0 - 0';
+      });
+      defIds.forEach(function(i) {
+        var n = workingNations[i];
+        n.wars = (n.wars && n.wars.trim() && n.wars !== '—' ? n.wars + ', ' : '') + warName + ' - 1 - 0';
+      });
+      addToLog('[AI] War declared: ' + botPlayerName + ' vs ' + targetName + ' (' + warName + ').');
+      refreshAutoDropdowns();
+    });
+  } catch(e) {
+    aiError('botDeclareWar error:', e.message);
+    return false;
+  }
+}
+
+async function botRequestAlliance(targetName, allianceName, botPlayerName) {
+  try {
+    await refreshFirebaseOnce();
+    var idx = findBotPlayerIdx(botPlayerName);
+    if (idx < 0) return false;
+
+    var targetIdx = workingNations.findIndex(function(n) {
+      return normalizeName(((n.first_name||'') + ' ' + (n.surname||'')).trim()) === normalizeName(targetName);
+    });
+    if (targetIdx < 0) { aiError('Target not found for alliance:', targetName); return false; }
+
+    // Get target email
+    var targetEmail = getAssignedEmailForName(targetName);
+    if (!targetEmail) { aiLog('No email for target player:', targetName); return false; }
+
+    var botEmail = AI_BOT_CONFIG.BOT_EMAIL.toLowerCase();
+    var targetEmailLow = targetEmail.toLowerCase();
+
+    var request = {
+      id: 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+      type: 'alliance',
+      fromEmail: botEmail,
+      fromPlayer: botPlayerName,
+      targetEmails: [botEmail, targetEmailLow],
+      targetPlayers: [botPlayerName, targetName],
+      allianceName: allianceName,
+      status: 'pending',
+      acceptStatus: {},
+      createdAt: Date.now(),
+    };
+    request.acceptStatus[botEmail.replace(/\./g,'_')] = 'accepted';
+    request.acceptStatus[targetEmailLow.replace(/\./g,'_')] = 'pending';
+
+    // Load existing requests and push
+    var existing = await fbGet('playerRequests') || {};
+    var key = request.id.replace(/\./g,'_');
+    existing[key] = request;
+    await fbSet('playerRequests', existing);
+    addToLog('[AI] Alliance request: ' + allianceName + ' (' + botPlayerName + ' → ' + targetName + ')');
+    return true;
+  } catch(e) {
+    aiError('botRequestAlliance error:', e.message);
+    return false;
+  }
+}
+
+async function botGiveResource(targetName, resource, amount, ctx, botPlayerName) {
+  try {
+    await refreshFirebaseOnce();
+    var idx = findBotPlayerIdx(botPlayerName);
+    if (idx < 0) return false;
+
+    var targetIdx = workingNations.findIndex(function(n) {
+      return normalizeName(((n.first_name||'') + ' ' + (n.surname||'')).trim()) === normalizeName(targetName);
+    });
+    if (targetIdx < 0) { aiError('Target not found for give_resource:', targetName); return false; }
+
+    return await performActionWithRefresh('Bot: Transfer ' + resource + ' to ' + targetName, function() {
+      var player = workingNations[idx];
+      var target = workingNations[targetIdx];
+      var curStat = parseFloat(player[resource]) || 0;
+      var isDecimalStat = ['food','stability','happiness'].includes(resource);
+      if (isDecimalStat) {
+        var isDecimal = curStat <= 1;
+        var transfer = isDecimal ? amount / 100 : amount;
+        if ((isDecimal && curStat < transfer) || (!isDecimal && curStat < amount)) {
+          aiLog('Not enough ' + resource + ' to give.'); return false;
+        }
+        player[resource] = isDecimal
+          ? String(Math.max(0, Math.round((curStat - transfer)*10000)/10000))
+          : String(Math.max(0, Math.round((curStat - amount)*100)/100));
+        var tgt = parseFloat(target[resource]) || 0;
+        var tgtDec = tgt <= 1;
+        target[resource] = tgtDec
+          ? String(Math.min(1, Math.round((tgt+transfer)*10000)/10000))
+          : String(Math.min(100, Math.round((tgt+amount)*100)/100));
+      } else {
+        if (curStat < amount) { aiLog('Not enough ' + resource + ' to give.'); return false; }
+        player[resource] = String(Math.round((curStat - amount)*100)/100);
+        target[resource] = String(Math.round(((parseFloat(target[resource])||0)+amount)*100)/100);
+      }
+      addToLog('[AI] Transfer: ' + botPlayerName + ' gave ' + amount + ' ' + resource + ' to ' + targetName);
+      refreshAutoDropdowns();
+    });
+  } catch(e) {
+    aiError('botGiveResource error:', e.message);
+    return false;
+  }
+}
+
+async function botGiveProvince(provinceIdOrName, targetName, ctx, botPlayerName) {
+  try {
+    await refreshFirebaseOnce();
+    var idx = findBotPlayerIdx(botPlayerName);
+    if (idx < 0) return false;
+    var myName = ((workingNations[idx].first_name||'') + ' ' + (workingNations[idx].surname||'')).trim();
+
+    // Find province
+    var pr = workingProvinces.find(function(p) {
+      return String(p.number) === String(provinceIdOrName) ||
+             (p.suffix || '').toLowerCase().includes(String(provinceIdOrName).toLowerCase()) ||
+             (p.prefix || '').toLowerCase().includes(String(provinceIdOrName).toLowerCase());
+    });
+    if (!pr) { aiLog('Province not found:', provinceIdOrName); return false; }
+    if (getPlayerOwnership(pr, myName) < 50) { aiLog('Bot does not own province:', provinceIdOrName); return false; }
+
+    return await performActionWithRefresh('Bot: Cede province ' + provinceIdOrName + ' to ' + targetName, function() {
+      ['owner1','owner2','owner3','owner4'].forEach(function(col) {
+        if (pr[col] && pr[col].toLowerCase().includes(myName.toLowerCase())) pr[col] = '';
+      });
+      var placed = false;
+      ['owner1','owner2','owner3','owner4'].forEach(function(col) {
+        if (!placed && (!pr[col] || pr[col].trim() === '')) { pr[col] = targetName + ' 100%'; placed = true; }
+      });
+      if (!placed) pr.owner1 = targetName + ' 100%';
+      syncTradeNodes();
+      updateWorkingNationProvinceStats();
+      addToLog('[AI] Province #' + pr.number + ' ceded from ' + myName + ' to ' + targetName);
+      refreshAutoDropdowns();
+    });
+  } catch(e) {
+    aiError('botGiveProvince error:', e.message);
+    return false;
+  }
+}
+
+async function botLeaveAlliance(allianceName, ctx, botPlayerName) {
+  try {
+    await refreshFirebaseOnce();
+    var idx = findBotPlayerIdx(botPlayerName);
+    if (idx < 0) return false;
+
+    var n = workingNations[idx];
+    var myAlliances = (n.alliances || '').split(',').map(function(a){ return a.trim(); });
+    if (!myAlliances.some(function(a){ return a.toLowerCase() === allianceName.toLowerCase(); })) {
+      aiLog('Not in alliance:', allianceName); return false;
+    }
+
+    return await performActionWithRefresh('Bot: Leave alliance ' + allianceName, function() {
+      var remaining = myAlliances.filter(function(a){ return a && a !== '—' && a.toLowerCase() !== 'none' && a.toLowerCase() !== allianceName.toLowerCase(); });
+      n.alliances = remaining.length ? remaining.join(', ') : '—';
+      var wars = parseWarNames(n.wars);
+      n.wars = '';
+      addToLog('[AI] ' + botPlayerName + ' left alliance: ' + allianceName);
+      refreshAutoDropdowns();
+    });
+  } catch(e) {
+    aiError('botLeaveAlliance error:', e.message);
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UTILITY: find bot nation in workingNations
+// ─────────────────────────────────────────────────────────────────────────────
+
+function findBotPlayerIdx(botPlayerName) {
+  if (!window.workingNations) return -1;
+  return workingNations.findIndex(function(n) {
+    var full = ((n.first_name||'') + ' ' + (n.surname||'')).trim();
+    return normalizeName(full) === normalizeName(botPlayerName);
+  });
+}
+
+function sleep(ms) { return new Promise(function(r){ setTimeout(r, ms); }); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FIRST-RUN SETUP — bot chooses its own name + starting territories
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function runFirstTimeSetup(botEmail) {
+  aiLog('Running first-time setup…');
+
+  // Load game data
+  await refreshFirebaseOnce();
+
+  // Collect available unclaimed/lightly-held provinces
+  var available = workingProvinces.filter(function(pr) {
+    var allOwners = [pr.owner1, pr.owner2, pr.owner3, pr.owner4].filter(Boolean).join(' ');
+    return !allOwners.trim() || allOwners.trim() === '—';
+  }).slice(0, 15);
+
+  var availableNames = available.map(function(p) { return (p.suffix || p.prefix || '#' + p.number); }).join(', ');
+  var allNationNames = workingNations.map(function(n){ return ((n.first_name||'')+' '+(n.surname||'')).trim(); }).join(', ');
+
+  // Ask LLM to choose a name and up to 3 starting provinces
+  var setupPrompt = `You are a new autonomous AI player joining a nation strategy game. You need to choose:
+1. A creative, unique nation name (two words: first name + surname, e.g. "Iron Veil" or "Krom Ashvale")
+2. Up to 3 starting provinces from the unclaimed ones listed below
+
+Existing players: ${allNationNames}
+Available unclaimed provinces: ${availableNames || 'none — pick any 1–3 province numbers from 1–50'}
+
+Respond ONLY with valid JSON, no markdown:
+{
+  "first_name": "YourFirst",
+  "surname": "YourLast",
+  "personality": "One sentence describing your nation's play style",
+  "provinces": ["Province Name 1", "Province Name 2"]
+}`;
+
+  aiLog('Asking LLM to choose name and territories…');
+  var rawResp = await callHuggingFace(setupPrompt);
+
+  var setup = {};
+  try {
+    var match = rawResp.match(/\{[\s\S]*\}/);
+    if (match) setup = JSON.parse(match[0]);
+  } catch(e) {
+    aiLog('Could not parse setup response, using defaults');
+    setup = { first_name: 'Iron', surname: 'Veil', personality: 'Calculated and expansionist', provinces: [] };
+  }
+
+  var firstName = (setup.first_name || 'Iron').trim();
+  var surName = (setup.surname || 'Veil').trim();
+  var personality = setup.personality || 'Adaptive strategist';
+  var chosenProvs = Array.isArray(setup.provinces) ? setup.provinces : [];
+  var botPlayerName = firstName + ' ' + surName;
+
+  aiLog('Bot chose name:', botPlayerName);
+  aiLog('Bot personality:', personality);
+  aiLog('Bot chosen provinces:', chosenProvs);
+
+  // We can't auto-assign ourselves to a nation row — that requires admin.
+  // Instead we save the desired name + provinces to Firebase so the admin can action it,
+  // AND we post a setup message in chat.
+  await saveBotState({
+    configured: true,
+    botPlayerName: botPlayerName,
+    botEmail: botEmail,
+    personality: personality,
+    desiredProvinces: chosenProvs,
+    setupAt: Date.now(),
+    lastRun: 0,
+  });
+
+  // Post setup announcement in global chat
+  var announceId = 'msg_' + Date.now() + '_bot_intro';
+  await fbSet('chat/global/' + announceId, {
+    id: announceId,
+    channel: 'global',
+    player: botPlayerName,
+    email: botEmail,
+    text: 'A new power rises. The nation of ' + botPlayerName + ' has entered the game. ' + personality + '. Beware.',
+    ts: Date.now(),
+  });
+
+  // Save desired name/provinces as an admin notification
+  var notifId = 'notif_' + Date.now();
+  await fbSet('adminNotifications/' + notifId, {
+    id: notifId,
+    type: 'aiPlayerSetup',
+    message: '🤖 AI Player setup required: Please assign email "' + botEmail + '" to a new player named "' + botPlayerName + '" and give them provinces: ' + (chosenProvs.join(', ') || 'any 3'),
+    botPlayerName: botPlayerName,
+    botEmail: botEmail,
+    desiredProvinces: chosenProvs,
+    createdAt: Date.now(),
+    read: false,
+  });
+
+  aiLog('First-time setup complete. Admin notification posted.');
+  return botPlayerName;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN BOT TICK — the core loop that runs every 3 hours
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function runBotTick() {
+  aiLog('=== BOT TICK STARTING ===', new Date().toISOString());
+
+  // Sign in as bot
+  var user;
+  try {
+    user = await botSignIn();
+  } catch(e) {
+    aiError('Cannot sign in as bot. Check BOT_EMAIL and BOT_PASSWORD in AI_BOT_CONFIG.');
+    return;
+  }
+
+  try {
+    // Load state
+    await loadBotState();
+    var state = _botState || {};
+
+    // First-time setup
+    if (!state.configured || !state.botPlayerName) {
+      await runFirstTimeSetup(AI_BOT_CONFIG.BOT_EMAIL);
+      await loadBotState();
+      state = _botState || {};
+    }
+
+    var botPlayerName = state.botPlayerName;
+    aiLog('Bot player name:', botPlayerName);
+
+    // Check we have game data
+    await refreshFirebaseOnce();
+    if (!window.workingNations || !workingNations.length) {
+      aiLog('No game data loaded — skipping tick.');
+      return;
+    }
+
+    // Check bot is in the game
+    var botIdx = findBotPlayerIdx(botPlayerName);
+    if (botIdx < 0) {
+      aiLog('Bot nation "' + botPlayerName + '" not found in workingNations. Waiting for admin setup.');
+      // Post reminder
+      var remId = 'msg_' + Date.now() + '_setupremind';
+      await fbSet('chat/global/' + remId, {
+        id: remId, channel: 'global',
+        player: botPlayerName,
+        email: AI_BOT_CONFIG.BOT_EMAIL,
+        text: '[System] The AI nation "' + botPlayerName + '" is waiting for an admin to assign it in the game.',
+        ts: Date.now(),
+      });
+      return;
+    }
+
+    // Collect context
+    aiLog('Collecting game context…');
+    var ctx = await collectGameContext(botPlayerName);
+    if (!ctx) { aiLog('Could not collect context.'); return; }
+
+    // Build and send prompt
+    aiLog('Building prompt…');
+    var prompt = buildPrompt(ctx, botPlayerName);
+
+    aiLog('Calling HuggingFace…');
+    var rawResp = await callHuggingFace(prompt);
+
+    // Parse response
+    var parsed;
+    try {
+      parsed = parseLLMResponse(rawResp);
+    } catch(e) {
+      aiError('Could not parse LLM response:', e.message);
+      // Post a generic in-character message as fallback
+      var fbId = 'msg_' + Date.now() + '_fallback';
+      await fbSet('chat/global/' + fbId, {
+        id: fbId, channel: 'global',
+        player: botPlayerName, email: AI_BOT_CONFIG.BOT_EMAIL,
+        text: botPlayerName + ' watches and waits.',
+        ts: Date.now(),
+      });
+      return;
+    }
+
+    aiLog('Reasoning:', parsed.reasoning);
+    aiLog('Actions planned:', JSON.stringify(parsed.actions));
+
+    // Execute actions
+    var actions = Array.isArray(parsed.actions) ? parsed.actions : [];
+    var actionLog = await executeBotActions(actions, ctx, botPlayerName);
+
+    // Save run record
+    var runId = 'run_' + Date.now();
+    await saveBotState({
+      lastRun: Date.now(),
+      lastRunId: runId,
+      lastActions: actionLog,
+      lastReasoning: parsed.reasoning || '',
+    });
+
+    // Save to Firebase run history (admin can inspect)
+    await fbSet(AI_BOT_CONFIG.FB_KEY + '_history/' + runId, {
+      id: runId,
+      ts: Date.now(),
+      reasoning: parsed.reasoning || '',
+      actionsPlanned: actions,
+      actionsLog: actionLog,
+    });
+
+    aiLog('=== BOT TICK COMPLETE ===');
+    aiLog('Actions taken:', actionLog);
+
+  } finally {
+    // Always sign out and restore previous user if any
+    await botSignOut();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRIGGER SYSTEM — "first person online after the 3-hour mark" pattern
+// (mirrors how checkAndRunAutomaticUpdates works for daily updates)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function checkAndRunBotTick() {
+  // Guard: must have Firebase
+  if (!window.firebaseDb || !window.firebaseRef || !window.firebaseGet || !window.firebaseSet) return;
+
+  // Guard: game must be started
+  if (typeof isGameStarted === 'function' && !isGameStarted()) return;
+
+  try {
+    var state = await fbGet(AI_BOT_CONFIG.FB_KEY);
+    var lastRun = (state && state.lastRun) ? state.lastRun : 0;
+    var now = Date.now();
+    var elapsed = now - lastRun;
+
+    if (elapsed < AI_BOT_CONFIG.INTERVAL_MS) {
+      var remaining = Math.round((AI_BOT_CONFIG.INTERVAL_MS - elapsed) / 60000);
+      aiLog('Bot not due yet. Next tick in ~' + remaining + ' min.');
+      return;
+    }
+
+    aiLog('Bot tick is due! Elapsed since last run:', Math.round(elapsed/60000) + ' min. Running now…');
+
+    // Lock to prevent concurrent runs (multi-tab)
+    var lockRef = window.firebaseRef(window.firebaseDb, AI_BOT_CONFIG.FB_KEY + '_lock');
+    var lockSnap = await window.firebaseGet(lockRef);
+    if (lockSnap.exists()) {
+      var lockAge = now - (lockSnap.val() || 0);
+      if (lockAge < 5 * 60 * 1000) { // 5-min lock timeout
+        aiLog('Another tab is running the bot. Skipping.');
+        return;
+      }
+    }
+
+    // Acquire lock
+    await window.firebaseSet(lockRef, now);
+
+    try {
+      // Remember current user so we can restore after bot run
+      var prevUser = window.firebaseAuth.currentUser;
+
+      await runBotTick();
+
+      // Restore previous user session if they were logged in
+      if (prevUser && prevUser.email) {
+        aiLog('Previous user was:', prevUser.email, '— session restored by re-auth prompt not possible automatically. User will need to re-login.');
+        // We can't re-auth without password, so just notify
+        showAdminToast('🤖 AI Bot ran successfully. Please log back in.', 'success');
+      }
+    } finally {
+      // Release lock
+      await window.firebaseSet(lockRef, null);
+    }
+
+  } catch(e) {
+    aiError('checkAndRunBotTick error:', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN PANEL — inject UI into the page so admins can manage the bot
+// ─────────────────────────────────────────────────────────────────────────────
+
+function injectBotAdminPanel() {
+  // Only show to admins
+  if (typeof isAdminUser === 'function' && !isAdminUser()) return;
+
+  // Avoid double-inject
+  if (document.getElementById('aiBotAdminPanel')) return;
+
+  // Find a good place to inject — after the existing admin content, or in body
+  var panel = document.createElement('div');
+  panel.id = 'aiBotAdminPanel';
+  panel.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9999;background:var(--color-background-secondary,#1a1a2e);border:1px solid var(--color-accent,#7c3aed);border-radius:12px;padding:14px 18px;min-width:260px;box-shadow:0 8px 32px rgba(0,0,0,0.4);font-family:IBM Plex Mono,monospace;';
+
+  panel.innerHTML = [
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">',
+    '  <span style="font-size:18px;">🤖</span>',
+    '  <span style="font-size:13px;font-weight:700;color:var(--color-accent,#7c3aed);letter-spacing:0.5px;">AI BOT CONTROL</span>',
+    '  <button onclick="document.getElementById(\'aiBotAdminPanel\').style.display=\'none\'" style="margin-left:auto;background:none;border:none;color:var(--color-text-tertiary,#888);font-size:16px;cursor:pointer;line-height:1;">×</button>',
+    '</div>',
+    '<div id="aiBotStatus" style="font-size:11px;color:var(--color-text-tertiary,#888);margin-bottom:10px;">Loading status…</div>',
+    '<div style="display:flex;flex-direction:column;gap:8px;">',
+    '  <button id="aiBotRunBtn" onclick="window.runBotNow()" style="padding:8px 14px;background:var(--color-accent,#7c3aed);color:#fff;border:none;border-radius:7px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:opacity 0.2s;">▶ Run Bot Now</button>',
+    '  <button onclick="window.showBotConfig()" style="padding:7px 14px;background:transparent;color:var(--color-text-secondary,#aaa);border:1px solid var(--color-border-primary,#333);border-radius:7px;font-family:inherit;font-size:12px;cursor:pointer;">⚙ Configure</button>',
+    '  <button onclick="window.showBotHistory()" style="padding:7px 14px;background:transparent;color:var(--color-text-secondary,#aaa);border:1px solid var(--color-border-primary,#333);border-radius:7px;font-family:inherit;font-size:12px;cursor:pointer;">📋 Last Run Log</button>',
+    '</div>',
+  ].join('');
+
+  document.body.appendChild(panel);
+
+  // Floating toggle button (persists when panel is hidden)
+  var toggle = document.createElement('button');
+  toggle.id = 'aiBotToggle';
+  toggle.innerHTML = '🤖';
+  toggle.title = 'AI Bot Control';
+  toggle.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9998;background:var(--color-accent,#7c3aed);color:#fff;border:none;border-radius:50%;width:44px;height:44px;font-size:20px;cursor:pointer;box-shadow:0 4px 16px rgba(124,58,237,0.4);display:none;';
+  toggle.onclick = function() {
+    var p = document.getElementById('aiBotAdminPanel');
+    if (p) { p.style.display = 'block'; toggle.style.display = 'none'; }
+  };
+  document.body.appendChild(toggle);
+
+  // Override close button to show toggle instead
+  var closeBtn = panel.querySelector('button');
+  if (closeBtn) {
+    var origClose = closeBtn.onclick;
+    closeBtn.onclick = function() {
+      panel.style.display = 'none';
+      toggle.style.display = 'flex';
+      toggle.style.alignItems = 'center';
+      toggle.style.justifyContent = 'center';
+    };
+  }
+
+  refreshBotAdminStatus();
+}
+
+async function refreshBotAdminStatus() {
+  var statusEl = document.getElementById('aiBotStatus');
+  if (!statusEl) return;
+  try {
+    var state = await fbGet(AI_BOT_CONFIG.FB_KEY);
+    if (!state || !state.configured) {
+      statusEl.textContent = '⚠ Not configured — will self-setup on first run.';
+      statusEl.style.color = '#facc15';
+      return;
+    }
+    var lastRun = state.lastRun || 0;
+    var now = Date.now();
+    var elapsed = now - lastRun;
+    var elapsed_min = Math.floor(elapsed / 60000);
+    var next_min = Math.max(0, Math.round((AI_BOT_CONFIG.INTERVAL_MS - elapsed) / 60000));
+    statusEl.innerHTML = [
+      '<span style="color:#4ade80;">●</span> <strong style="color:var(--color-text-primary,#fff);">' + (state.botPlayerName || '?') + '</strong>',
+      '<br>Last run: ' + (lastRun ? elapsed_min + 'm ago' : 'never'),
+      '<br>Next due in: ' + (lastRun ? next_min + ' min' : 'now'),
+    ].join('');
+  } catch(e) {
+    statusEl.textContent = 'Error loading status: ' + e.message;
+  }
+}
+
+window.runBotNow = async function() {
+  var btn = document.getElementById('aiBotRunBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Running…'; }
+  try {
+    // Temporarily bypass interval check
+    var state = await fbGet(AI_BOT_CONFIG.FB_KEY) || {};
+    state.lastRun = 0;
+    await fbSet(AI_BOT_CONFIG.FB_KEY, state);
+    await checkAndRunBotTick();
+  } catch(e) {
+    aiError('runBotNow error:', e.message);
+    showAdminToast('Bot run failed: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '▶ Run Bot Now'; }
+    refreshBotAdminStatus();
+  }
+};
+
+window.showBotConfig = function() {
+  var html = '<div style="font-family:IBM Plex Mono,monospace;font-size:12px;line-height:1.8;max-width:480px;">';
+  html += '<strong>Current Config:</strong><br>';
+  html += 'Email: ' + AI_BOT_CONFIG.BOT_EMAIL + '<br>';
+  html += 'Model: ' + AI_BOT_CONFIG.HF_MODEL + '<br>';
+  html += 'Interval: ' + (AI_BOT_CONFIG.INTERVAL_MS / 3600000).toFixed(1) + ' hours<br>';
+  html += 'API Key set: ' + (AI_BOT_CONFIG.HF_API_KEY.startsWith('hf_') && AI_BOT_CONFIG.HF_API_KEY.length > 10 ? '✅' : '❌ Not set!') + '<br>';
+  html += '<br><em>Edit AI_BOT_CONFIG in the HTML to change these.</em>';
+  html += '</div>';
+  overlordAlert(html.replace(/<[^>]+>/g, '\n').replace(/\n{3,}/g, '\n\n').trim());
+};
+
+window.showBotHistory = async function() {
+  try {
+    var state = await fbGet(AI_BOT_CONFIG.FB_KEY);
+    if (!state) { overlordAlert('No bot state found.'); return; }
+    var msg = '🤖 Bot: ' + (state.botPlayerName || '?') + '\n\n';
+    msg += 'Last run: ' + (state.lastRun ? new Date(state.lastRun).toLocaleString() : 'never') + '\n';
+    msg += 'Reasoning: ' + (state.lastReasoning || '—') + '\n\n';
+    msg += 'Actions:\n' + (state.lastActions || []).join('\n') || '(none)';
+    overlordAlert(msg);
+  } catch(e) {
+    overlordAlert('Error: ' + e.message);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INIT — hook into existing auth state + checkAndRunAutomaticUpdates pattern
+// ─────────────────────────────────────────────────────────────────────────────
+
+function initAIBot() {
+  aiLog('AI Bot module loaded. Version 1.0');
+
+  // Hook into auth state change — when any user logs in, check if bot should run
+  if (window.firebaseAuth) {
+    window.firebaseAuth.onAuthStateChanged(function(user) {
+      if (user) {
+        // Wait for game data to load then check bot
+        setTimeout(function() {
+          if (typeof isGameStarted === 'function' && isGameStarted()) {
+            checkAndRunBotTick().catch(function(e) { aiError('Auto-check error:', e.message); });
+          }
+          // Inject admin panel for admins
+          if (typeof isAdminUser === 'function' && isAdminUser()) {
+            setTimeout(injectBotAdminPanel, 1500);
+          }
+          setTimeout(function() {
+            if (typeof isAdminUser === 'function' && isAdminUser()) injectBotAdminPanel();
+          }, 6000);
+        }, 4000);
+      }
+    });
+  }
+
+  // Expose globally for manual use/testing
+  window.aiBotRunTick = runBotTick;
+  window.aiBotCheck = checkAndRunBotTick;
+  window.aiBotConfig = AI_BOT_CONFIG;
+  window.injectBotAdminPanel = injectBotAdminPanel;
+  window.refreshBotAdminStatus = refreshBotAdminStatus;
+}
+
+// Run init after DOM ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initAIBot);
+} else {
+  initAIBot();
+}
+
+})(); // end IIFE
+
+
 </script>
