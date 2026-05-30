@@ -78719,9 +78719,9 @@ try { Object.freeze(renderEspionageAdminCentersList); } catch(e) {}
 //  ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝     ╚═╝ ╚═════╝
 // ─────────────────────────────────────────────────────────────────────────────
 
-const AI_BOT_CONFIG = {
+var AI_BOT_CONFIG = {
   // ── REQUIRED: set your Hugging Face API key here ──
-  HF_API_KEY: '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',
+  HF_API_KEY: '', // loaded from localStorage at runtime
 
   // ── Hugging Face model. Must support conversational/instruction tuning ──
   // Good free options: mistralai/Mistral-7B-Instruct-v0.3
@@ -78730,8 +78730,8 @@ const AI_BOT_CONFIG = {
   HF_MODEL: 'mistralai/Mistral-7B-Instruct-v0.3',
 
   // ── Firebase auth: the email/pass the AI logs in with ──
-  BOT_EMAIL: 'aibot@gmail.com',    // must be a registered Firebase account
-  BOT_PASSWORD: 'plsdontwin',
+  BOT_EMAIL: 'ai.player@yourgame.com',    // must be a registered Firebase account
+  BOT_PASSWORD: 'REPLACE_WITH_BOT_PASSWORD',
 
   // ── How often the bot wakes up (ms). Default: 3 hours ──
   INTERVAL_MS: 3 * 60 * 60 * 1000,
@@ -79684,6 +79684,20 @@ async function checkAndRunBotTick() {
 // ADMIN PANEL — inject UI into the page so admins can manage the bot
 // ─────────────────────────────────────────────────────────────────────────────
 
+function botLoadKey() {
+  // Load key from localStorage into live config
+  var saved = localStorage.getItem('aibot_hf_key') || '';
+  if (saved) AI_BOT_CONFIG.HF_API_KEY = saved;
+  return saved;
+}
+
+function botSaveKey(key) {
+  key = (key || '').trim();
+  AI_BOT_CONFIG.HF_API_KEY = key;
+  if (key) localStorage.setItem('aibot_hf_key', key);
+  else localStorage.removeItem('aibot_hf_key');
+}
+
 function injectBotAdminPanel() {
   // Only show to admins
   if (typeof isAdminUser === 'function' && !isAdminUser()) return;
@@ -79691,53 +79705,101 @@ function injectBotAdminPanel() {
   // Avoid double-inject
   if (document.getElementById('aiBotAdminPanel')) return;
 
-  // Find a good place to inject — after the existing admin content, or in body
+  // Load saved key immediately
+  botLoadKey();
+
   var panel = document.createElement('div');
   panel.id = 'aiBotAdminPanel';
-  panel.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9999;background:var(--color-background-secondary,#1a1a2e);border:1px solid var(--color-accent,#7c3aed);border-radius:12px;padding:14px 18px;min-width:260px;box-shadow:0 8px 32px rgba(0,0,0,0.4);font-family:IBM Plex Mono,monospace;';
+  panel.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9999;background:var(--color-background-secondary,#1a1a2e);border:1px solid var(--color-accent,#7c3aed);border-radius:12px;padding:14px 18px;min-width:280px;max-width:320px;box-shadow:0 8px 32px rgba(0,0,0,0.4);font-family:IBM Plex Mono,monospace;';
+
+  var keySet = AI_BOT_CONFIG.HF_API_KEY.startsWith('hf_') && AI_BOT_CONFIG.HF_API_KEY.length > 10;
+  var keyDisplay = keySet
+    ? AI_BOT_CONFIG.HF_API_KEY.slice(0,6) + '••••••••' + AI_BOT_CONFIG.HF_API_KEY.slice(-4)
+    : '';
 
   panel.innerHTML = [
     '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">',
     '  <span style="font-size:18px;">🤖</span>',
     '  <span style="font-size:13px;font-weight:700;color:var(--color-accent,#7c3aed);letter-spacing:0.5px;">AI BOT CONTROL</span>',
-    '  <button onclick="document.getElementById(\'aiBotAdminPanel\').style.display=\'none\'" style="margin-left:auto;background:none;border:none;color:var(--color-text-tertiary,#888);font-size:16px;cursor:pointer;line-height:1;">×</button>',
+    '  <button id="aiBotCloseBtn" style="margin-left:auto;background:none;border:none;color:var(--color-text-tertiary,#888);font-size:16px;cursor:pointer;line-height:1;">×</button>',
     '</div>',
+
+    // HF Key input row
+    '<div style="margin-bottom:10px;">',
+    '  <div style="font-size:10px;color:var(--color-text-tertiary,#888);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;">Hugging Face API Key</div>',
+    '  <div style="display:flex;gap:6px;">',
+    '    <input id="aiBotKeyInput" type="password" placeholder="hf_..." value="' + (keySet ? AI_BOT_CONFIG.HF_API_KEY : '') + '"',
+    '      style="flex:1;padding:6px 8px;background:var(--color-background-tertiary,#111);border:1px solid var(--color-border-primary,#333);border-radius:6px;color:var(--color-text-primary,#fff);font-family:inherit;font-size:11px;min-width:0;">',
+    '    <button onclick="window.botSaveKeyFromInput()" style="padding:6px 10px;background:var(--color-accent,#7c3aed);color:#fff;border:none;border-radius:6px;font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">Save</button>',
+    '  </div>',
+    '  <div id="aiBotKeyStatus" style="font-size:10px;margin-top:3px;color:' + (keySet ? '#4ade80' : '#f87171') + ';">',
+    '    ' + (keySet ? '✓ Key saved — ' + keyDisplay : '⚠ No key set — bot cannot run'),
+    '  </div>',
+    '</div>',
+
+    // Status
     '<div id="aiBotStatus" style="font-size:11px;color:var(--color-text-tertiary,#888);margin-bottom:10px;">Loading status…</div>',
-    '<div style="display:flex;flex-direction:column;gap:8px;">',
-    '  <button id="aiBotRunBtn" onclick="window.runBotNow()" style="padding:8px 14px;background:var(--color-accent,#7c3aed);color:#fff;border:none;border-radius:7px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:opacity 0.2s;">▶ Run Bot Now</button>',
-    '  <button onclick="window.showBotConfig()" style="padding:7px 14px;background:transparent;color:var(--color-text-secondary,#aaa);border:1px solid var(--color-border-primary,#333);border-radius:7px;font-family:inherit;font-size:12px;cursor:pointer;">⚙ Configure</button>',
+
+    // Buttons
+    '<div style="display:flex;flex-direction:column;gap:7px;">',
+    '  <button id="aiBotRunBtn" onclick="window.runBotNow()" style="padding:8px 14px;background:var(--color-accent,#7c3aed);color:#fff;border:none;border-radius:7px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;">▶ Run Bot Now</button>',
     '  <button onclick="window.showBotHistory()" style="padding:7px 14px;background:transparent;color:var(--color-text-secondary,#aaa);border:1px solid var(--color-border-primary,#333);border-radius:7px;font-family:inherit;font-size:12px;cursor:pointer;">📋 Last Run Log</button>',
+    '  <button onclick="window.botClearKey()" style="padding:6px 14px;background:transparent;color:#f87171;border:1px solid rgba(248,113,113,0.3);border-radius:7px;font-family:inherit;font-size:11px;cursor:pointer;">🗑 Clear Saved Key</button>',
     '</div>',
   ].join('');
 
   document.body.appendChild(panel);
 
-  // Floating toggle button (persists when panel is hidden)
+  // Floating toggle button
   var toggle = document.createElement('button');
   toggle.id = 'aiBotToggle';
   toggle.innerHTML = '🤖';
   toggle.title = 'AI Bot Control';
-  toggle.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9998;background:var(--color-accent,#7c3aed);color:#fff;border:none;border-radius:50%;width:44px;height:44px;font-size:20px;cursor:pointer;box-shadow:0 4px 16px rgba(124,58,237,0.4);display:none;';
+  toggle.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9998;background:var(--color-accent,#7c3aed);color:#fff;border:none;border-radius:50%;width:44px;height:44px;font-size:20px;cursor:pointer;box-shadow:0 4px 16px rgba(124,58,237,0.4);display:none;align-items:center;justify-content:center;';
   toggle.onclick = function() {
     var p = document.getElementById('aiBotAdminPanel');
     if (p) { p.style.display = 'block'; toggle.style.display = 'none'; }
   };
   document.body.appendChild(toggle);
 
-  // Override close button to show toggle instead
-  var closeBtn = panel.querySelector('button');
+  // Close button
+  var closeBtn = document.getElementById('aiBotCloseBtn');
   if (closeBtn) {
-    var origClose = closeBtn.onclick;
     closeBtn.onclick = function() {
       panel.style.display = 'none';
       toggle.style.display = 'flex';
-      toggle.style.alignItems = 'center';
-      toggle.style.justifyContent = 'center';
     };
   }
 
   refreshBotAdminStatus();
 }
+
+window.botSaveKeyFromInput = function() {
+  var input = document.getElementById('aiBotKeyInput');
+  var key = input ? input.value.trim() : '';
+  botSaveKey(key);
+  var statusEl = document.getElementById('aiBotKeyStatus');
+  if (statusEl) {
+    if (key.startsWith('hf_') && key.length > 10) {
+      var display = key.slice(0,6) + '••••••••' + key.slice(-4);
+      statusEl.textContent = '✓ Key saved — ' + display;
+      statusEl.style.color = '#4ade80';
+    } else {
+      statusEl.textContent = '⚠ Invalid key format (should start with hf_)';
+      statusEl.style.color = '#f87171';
+    }
+  }
+  aiLog('HF API key saved to localStorage.');
+};
+
+window.botClearKey = function() {
+  botSaveKey('');
+  var input = document.getElementById('aiBotKeyInput');
+  if (input) input.value = '';
+  var statusEl = document.getElementById('aiBotKeyStatus');
+  if (statusEl) { statusEl.textContent = '⚠ No key set — bot cannot run'; statusEl.style.color = '#f87171'; }
+  aiLog('HF API key cleared.');
+};
 
 async function refreshBotAdminStatus() {
   var statusEl = document.getElementById('aiBotStatus');
@@ -79814,6 +79876,7 @@ window.showBotHistory = async function() {
 
 function initAIBot() {
   aiLog('AI Bot module loaded. Version 1.0');
+  botLoadKey(); // restore saved HF key from localStorage
 
   // Hook into auth state change — when any user logs in, check if bot should run
   if (window.firebaseAuth) {
