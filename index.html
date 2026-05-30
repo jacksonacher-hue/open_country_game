@@ -4911,6 +4911,11 @@ function renderPlayerRequests() {
     if (req.type === 'endWar' && req.peaceLength) {
       acceptSummary += '<div style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px;">Peace length: ' + esc(String(req.peaceLength)) + ' days</div>';
     }
+    var removeBtn = '';
+    if (req.fromEmail === email || isAdminUser()) {
+      removeBtn = '<button onclick="removePlayerRequest(\'' + req.id + '\')" ' +
+        'style="margin-top:8px;padding:5px 10px;font-size:11px;background:transparent;color:#888;border:1px solid #333;border-radius:6px;cursor:pointer;width:100%;">🗑 Remove</button>';
+    }
     return '<div style="border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);padding:12px 14px;background:var(--color-background-tertiary);">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;">' +
         '<div style="font-size:13px;font-weight:600;">' + title + '</div>' +
@@ -4919,8 +4924,24 @@ function renderPlayerRequests() {
       '<div style="font-size:12px;color:var(--color-text-secondary);margin-top:4px;">' + selfRole + ' — ' + esc(req.fromPlayer || '?') + ' → ' + esc(targetList) + '</div>' +
       acceptSummary +
       actionButtons +
+      removeBtn +
     '</div>';
   }).join('');
+}
+
+async function removePlayerRequest(reqId) {
+  if (!reqId) return;
+  try {
+    var key = reqId.replace(/\./g, '_');
+    var ref = window.firebaseRef(window.firebaseDb, 'playerRequests/' + key);
+    await window.firebaseSet(ref, null);
+    // Remove from local array
+    playerRequests = playerRequests.filter(function(r) { return r.id !== reqId; });
+    renderPlayerRequests();
+    showAdminToast('Request removed.', 'success');
+  } catch(e) {
+    overlordAlert('Failed to remove request: ' + e.message);
+  }
 }
 
 function openAdminLoginModal() {
@@ -78931,6 +78952,7 @@ function buildPrompt(ctx) {
     '- give_resource: {"type":"give_resource","target":"Nation Name","resource":"eco/military/defence","amount":5}\n' +
     '- give_province: {"type":"give_province","province":"Province Name or #number","target":"Nation Name"}\n' +
     '- leave_alliance: {"type":"leave_alliance","alliance_name":"..."}\n' +
+    '- request_province: {"type":"request_province","province":"Province Name or #number"} — stake a claim on an unclaimed province\n' +
     '- no_action: {"type":"no_action"}\n\n' +
     'Respond with ONLY valid JSON, no extra text:\n' +
     '{"reasoning":"one sentence why","actions":[...1 to 3 actions...]}';
@@ -78948,10 +78970,14 @@ async function execAction(action, ctx) {
       var msg = String(action.message||'').trim();
       if (!msg) { log('send_chat: empty message, skipping'); return; }
       var id = 'msg_' + Date.now() + '_bot';
+      // Use the player's own assigned email so it shows as them, not the admin
+      var botEmail = (typeof getAssignedEmailForName === 'function' && getAssignedEmailForName(playerName))
+        || (window.firebaseAuth.currentUser && window.firebaseAuth.currentUser.email) || 'bot';
+      log('Sending chat as player:', playerName, 'email:', botEmail);
       await fbSet('chat/global/' + id, {
         id: id, channel: 'global',
         player: playerName,
-        email: (window.firebaseAuth.currentUser && window.firebaseAuth.currentUser.email) || 'bot',
+        email: botEmail,
         text: msg, ts: Date.now(),
       });
       log('Chat sent:', msg);
@@ -79079,6 +79105,38 @@ async function execAction(action, ctx) {
         refreshAutoDropdowns();
       });
       return ok ? '🚪 Left '+alName : null;
+    }
+
+    case 'request_province': {
+      // Bot requests a province from admin — posts a visible notification in Firebase
+      var provId = String(action.province||'').trim();
+      if (!provId) return;
+      // Check if province exists and is unclaimed
+      var pr = (workingProvinces||[]).find(function(p){
+        return String(p.number)===String(provId) ||
+          (p.suffix||'').toLowerCase().includes(provId.toLowerCase()) ||
+          (p.prefix||'').toLowerCase().includes(provId.toLowerCase());
+      });
+      if (!pr) { log('request_province: province not found:', provId); return; }
+      var alreadyOwned = getPlayerOwnership(pr, playerName) >= 50;
+      if (alreadyOwned) { log('Already own province:', provId); return; }
+      var notifId = 'botprovreq_' + Date.now();
+      await fbSet('adminNotifications/' + notifId, {
+        id: notifId, type: 'botProvinceRequest',
+        message: '🤖 AI Player "' + playerName + '" requests province: ' + (pr.suffix||pr.prefix||'#'+pr.number) + ' (#' + pr.number + ')',
+        playerName: playerName, province: pr.number, provinceName: (pr.suffix||pr.prefix||'#'+pr.number),
+        createdAt: Date.now(), read: false,
+      });
+      // Also send a chat message as the bot
+      var chatId = 'msg_' + Date.now() + '_botprov';
+      var botEmail2 = (typeof getAssignedEmailForName === 'function' && getAssignedEmailForName(playerName)) || '';
+      await fbSet('chat/global/' + chatId, {
+        id: chatId, channel: 'global', player: playerName, email: botEmail2,
+        text: 'The empire of ' + playerName + ' lays claim to ' + (pr.suffix||pr.prefix||'province #'+pr.number) + '. We await formal recognition.',
+        ts: Date.now(),
+      });
+      log('Province request posted for:', provId);
+      return '📜 Claimed province ' + (pr.suffix||pr.prefix||'#'+pr.number);
     }
 
     case 'no_action':
