@@ -78854,6 +78854,21 @@ async function buildContext(playerName) {
       ' alliances:' + (n.alliances&&n.alliances!=='—'?n.alliances:'none') + ')';
   });
 
+  // Build full province ownership map for the AI
+  var allProvsSummary = [];
+  var unclaimedProvs = [];
+  (workingProvinces || []).forEach(function(pr) {
+    var name = pr.suffix || pr.prefix || ('#' + pr.number);
+    var owners = [pr.owner1, pr.owner2, pr.owner3, pr.owner4].filter(Boolean).join(', ');
+    var eco = pr.econ_income || 0;
+    var mil = pr.mil_income || 0;
+    if (!owners || owners.trim() === '' || owners === '—') {
+      unclaimedProvs.push('#' + pr.number + ' ' + name + ' (eco+' + eco + ' mil+' + mil + ')');
+    } else {
+      allProvsSummary.push('#' + pr.number + ' ' + name + ': ' + owners + ' (eco+' + eco + ' mil+' + mil + ')');
+    }
+  });
+
   var ctx = {
     myName: myName,
     myIdx: idx,
@@ -78870,6 +78885,8 @@ async function buildContext(playerName) {
     borders: borderingNames.join(', ') || 'none',
     others: others.join('\n'),
     chat: recentChat.join('\n') || '(no recent messages)',
+    allProvs: allProvsSummary.join('\n'),
+    unclaimedProvs: unclaimedProvs.length ? unclaimedProvs.join('\n') : '(all provinces are claimed)',
   };
 
   log('Context built:', JSON.stringify({myName:ctx.myName, provinces:ctx.provinces, borders:ctx.borders, wars:ctx.wars}));
@@ -78955,25 +78972,59 @@ async function callHF(prompt) {
 }
 
 // ── Parse JSON from LLM response ─────────────────────────────────────────────
+function fixLLMJson(s) {
+  // Fix common LLM JSON mistakes
+  s = s.trim();
+  // Remove trailing commas before ] or }
+  s = s.replace(/,(\s*[}\]])/g, '$1');
+  // Fix double-closing braces on objects inside arrays: "}}" -> "}"  when followed by ]
+  s = s.replace(/\}\}(\s*[\],])/g, '}$1');
+  // If JSON is cut off mid-string, try to close it
+  // Count open braces/brackets and close them
+  var opens = 0, arrOpens = 0;
+  var inStr = false, escape = false;
+  for (var i = 0; i < s.length; i++) {
+    var c = s[i];
+    if (escape) { escape = false; continue; }
+    if (c === '\\') { escape = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === '{') opens++;
+    if (c === '}') opens--;
+    if (c === '[') arrOpens++;
+    if (c === ']') arrOpens--;
+  }
+  // Close any open strings first (rough)
+  if (inStr) s += '"';
+  // Close open arrays then objects
+  for (var a = 0; a < arrOpens; a++) s += ']';
+  for (var o = 0; o < opens; o++) s += '}';
+  return s;
+}
+
 function parseResponse(text) {
   // Strip markdown fences and thinking tags
   text = text.replace(/```json/g,'').replace(/```/g,'')
     .replace(/<think>[\s\S]*?<\/think>/g,'')
     .trim();
-  // Find the LAST { ... } block — reasoning models often preamble before the JSON
-  var match = text.match(/\{[\s\S]*\}(?=[^}]*$)/);
-  if (!match) match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('No JSON found in: ' + text.slice(0,200));
-  // Try progressively shorter matches if parse fails (model may have trailed off)
-  var attempts = [match[0]];
-  // Also try from last { to last }
-  var lastOpen = text.lastIndexOf('{');
-  var lastClose = text.lastIndexOf('}');
-  if (lastOpen >= 0 && lastClose > lastOpen) attempts.unshift(text.slice(lastOpen, lastClose+1));
+
+  // Extract the first { ... } block
+  var firstOpen = text.indexOf('{');
+  if (firstOpen < 0) throw new Error('No JSON found in: ' + text.slice(0,200));
+  var candidate = text.slice(firstOpen);
+
+  // Try raw first, then with fixes applied
+  var attempts = [candidate, fixLLMJson(candidate)];
   for (var i = 0; i < attempts.length; i++) {
-    try { return JSON.parse(attempts[i]); } catch(e) {}
+    try {
+      var parsed = JSON.parse(attempts[i]);
+      log('JSON parsed on attempt', i+1);
+      return parsed;
+    } catch(e) {
+      log('Parse attempt', i+1, 'failed:', e.message);
+    }
   }
-  throw new Error('JSON parse failed. Raw: ' + match[0].slice(0,200));
+  throw new Error('JSON parse failed after fixes. Raw: ' + candidate.slice(0,300));
 }
 
 // ── Build prompt ──────────────────────────────────────────────────────────────
@@ -78985,8 +79036,24 @@ function buildPrompt(ctx) {
       apexMsg.from + ' says: "' + apexMsg.text + '"\n' +
       'You MUST directly address this in your response.\n'
     : '';
+
+  var gameRules =
+    'GAME RULES SUMMARY:\n' +
+    '- Combat: attacker rolls 1 to their military, defender rolls 1 to their military + province defence. Highest wins. Both sides lose 10% military after battle.\n' +
+    '- Wars: being at war costs 3% happiness/day per war (max 15%/day). You must BORDER a nation to declare war.\n' +
+    '- Alliances: both players must accept. Allies share wars — attacking one attacks all.\n' +
+    '- Provinces: each province gives eco and military income each update cycle. You can only request_province for UNCLAIMED provinces (listed below).\n' +
+    '- Truces: after a war ends, a truce prevents re-declaring war for a period.\n' +
+    '- Resources: eco/military/defence/food/happiness/stability can be gifted to other players.\n\n';
+
+  var provSection =
+    'UNCLAIMED PROVINCES (you may request these):\n' + ctx.unclaimedProvs + '\n\n' +
+    'ALL CLAIMED PROVINCES (do NOT request these — they are already owned):\n' + ctx.allProvs + '\n\n';
+
   return 'You are an AI controlling the nation "' + ctx.myName + '" in a strategy game.\n\n' +
     apexSection +
+    gameRules +
+    provSection +
     'YOUR STATUS:\n' +
     'Econ: ' + ctx.econ + ' | Military: ' + ctx.mil + ' | Defence: ' + ctx.def + '\n' +
     'Food: ' + ctx.food + ' | Happiness: ' + ctx.happ + ' | Stability: ' + ctx.stab + '\n' +
