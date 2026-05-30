@@ -76636,15 +76636,15 @@ window.ecoConvertQuick = ecoConvertQuick;
         <!-- Input bar -->
         <div style="padding:12px 20px;border-top:1px solid var(--color-border-secondary);background:var(--color-background-secondary);">
           <div style="display:flex;gap:10px;align-items:flex-end;">
-            <textarea id="chatInput" rows="1" placeholder="Message…" maxlength="50"
+            <textarea id="chatInput" rows="1" placeholder="Message…" maxlength="100"
               style="flex:1;padding:10px 14px;font-family:inherit;font-size:13px;border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);background:var(--color-background-primary);color:var(--color-text-primary);resize:none;line-height:1.5;max-height:120px;overflow-y:auto;"
-              oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';(function(el){var cc=document.getElementById('chatCharCount');if(cc){var len=el.value.length;cc.textContent=len+'/50';cc.style.color=len>=45?'#f87171':len>=35?'#fbbf24':'var(--color-text-tertiary)';};})(this);"
+              oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';(function(el){var cc=document.getElementById('chatCharCount');if(cc){var len=el.value.length;cc.textContent=len+'/100';cc.style.color=len>=90?'#f87171':len>=75?'#fbbf24':'var(--color-text-tertiary)';};})(this);"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage();}"></textarea>
             <button id="chatSendBtn" onclick="sendChatMessage()" style="padding:10px 20px;font-family:inherit;font-size:13px;font-weight:700;color:#fff;background:#1d4ed8;border:none;border-radius:var(--border-radius-md);cursor:pointer;white-space:nowrap;flex-shrink:0;">Send</button>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding:0 2px;">
             <span id="chatCooldownStatus" style="font-size:11px;color:var(--color-text-tertiary);font-family:'IBM Plex Mono',monospace;"></span>
-            <span id="chatCharCount" style="font-size:11px;color:var(--color-text-tertiary);font-family:'IBM Plex Mono',monospace;">0/50</span>
+            <span id="chatCharCount" style="font-size:11px;color:var(--color-text-tertiary);font-family:'IBM Plex Mono',monospace;">0/100</span>
           </div>
         </div>
       </div>
@@ -76768,7 +76768,7 @@ function startDm() {
 
 var _chatLastSentTime = 0;
 var CHAT_COOLDOWN_MS = 10000; // 10 seconds
-var CHAT_MAX_CHARS = 50;
+var CHAT_MAX_CHARS = 100;
 
 async function sendChatMessage() {
   var input = document.getElementById('chatInput');
@@ -78976,7 +78976,7 @@ async function callHF(prompt) {
     body: JSON.stringify({
       model: BOT.model,
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 1024,
+      max_tokens: 8192,
       temperature: 0.7,
     }),
   });
@@ -78992,7 +78992,7 @@ async function callHF(prompt) {
       resp = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'HTTP-Referer': window.location.origin, 'X-Title': 'Open Country Game Bot' },
-        body: JSON.stringify({ model: 'poolside/laguna-xs.2-20260421:free', messages: [{ role: 'user', content: prompt }], max_tokens: 1024, temperature: 0.7 }),
+        body: JSON.stringify({ model: 'poolside/laguna-xs.2-20260421:free', messages: [{ role: 'user', content: prompt }], max_tokens: 8192, temperature: 0.7 }),
       });
       raw = await resp.text();
       log('Retry response status:', resp.status);
@@ -79024,7 +79024,7 @@ async function callHF(prompt) {
       body: JSON.stringify({
         model: BOT.model,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 1024,
+        max_tokens: 8192,
         temperature: 0.7,
       }),
     });
