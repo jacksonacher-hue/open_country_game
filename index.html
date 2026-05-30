@@ -78856,6 +78856,38 @@ async function callHF(prompt) {
   var raw = await resp.text();
   log('API raw response:', raw.slice(0, 500));
 
+  // Auto-retry on 429 rate limit
+  if (resp.status === 429) {
+    var retryAfter = 15;
+    try {
+      var errData = JSON.parse(raw);
+      retryAfter = (errData.error && errData.error.metadata && errData.error.metadata.retry_after_seconds)
+        ? Math.ceil(errData.error.metadata.retry_after_seconds) + 2
+        : 15;
+    } catch(e) {}
+    log('Rate limited. Retrying in', retryAfter, 'seconds...');
+    showAdminToast('🤖 Rate limited — retrying in ' + retryAfter + 's...', 'error');
+    await sleep(retryAfter * 1000);
+    // One retry
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + key,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': window.location.origin,
+        'X-Title': 'Open Country Game Bot',
+      },
+      body: JSON.stringify({
+        model: BOT.model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 500,
+        temperature: 0.85,
+      }),
+    });
+    raw = await resp.text();
+    log('Retry status:', resp.status, 'response:', raw.slice(0, 300));
+  }
+
   if (!resp.ok) throw new Error('API error ' + resp.status + ': ' + raw.slice(0, 300));
 
   var data = JSON.parse(raw);
