@@ -78976,7 +78976,7 @@ async function callHF(prompt) {
     body: JSON.stringify({
       model: BOT.model,
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 9999999,
+      max_tokens: 1048576,
       temperature: 0.7,
     }),
   });
@@ -78992,7 +78992,7 @@ async function callHF(prompt) {
       resp = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'HTTP-Referer': window.location.origin, 'X-Title': 'Open Country Game Bot' },
-        body: JSON.stringify({ model: 'poolside/laguna-xs.2-20260421:free', messages: [{ role: 'user', content: prompt }], max_tokens: 2048, temperature: 0.7 }),
+        body: JSON.stringify({ model: 'poolside/laguna-xs.2-20260421:free', messages: [{ role: 'user', content: prompt }], max_tokens: 1048576, temperature: 0.7 }),
       });
       raw = await resp.text();
       log('Retry response status:', resp.status);
@@ -79024,7 +79024,7 @@ async function callHF(prompt) {
       body: JSON.stringify({
         model: BOT.model,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 9999999,
+        max_tokens: 1048576,
         temperature: 0.7,
       }),
     });
