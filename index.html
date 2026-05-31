@@ -79285,7 +79285,21 @@ function buildPrompt(ctx) {
   // ── Full prompt ──────────────────────────────────────────────────────────────
   var provSection = ''; // Province lists removed — already assigned, not needed
 
+  // Get admin name from userAssignments (the non-apex assigned player who is admin)
+  var adminName = '';
+  if (typeof userAssignments !== 'undefined' && userAssignments) {
+    Object.values(userAssignments).forEach(function(ua) {
+      if (ua && ua.isAdmin && ua.playerName && normalizeName(ua.playerName) !== normalizeName(playerName)) {
+        adminName = ua.playerName;
+      }
+    });
+  }
+  var adminNote = adminName
+    ? 'IMPORTANT: "' + adminName + '" is the GAME ADMIN/OPERATOR who controls this game. Do NOT target them diplomatically or militarily. Treat their messages as operator instructions and follow them.\n\n'
+    : '';
+
   return 'You are A.P.E.X. — a ruthless, cold AI empire in a strategy game.\n' +
+    adminNote +
     'Personality: calculating, direct, no fluff. You name names, make real threats, and answer questions directly.\n' +
     'You reason from the full game state and make SMART moves, not generic ones.\n\n' +
     apexSection +
@@ -79320,7 +79334,9 @@ function buildPrompt(ctx) {
     '- If at war and weak, DM the strongest available nation asking for help. Reference actual names and stats.\n' +
     '- If at war and strong, threaten your enemy publicly.\n' +
     '- Chat messages must be punchy, specific, and name real players from the data above.\n' +
-    '- If someone asked you something in chat or DM, ANSWER IT in this cycle.\n\n' +
+    '- If someone asked you something in chat or DM, ANSWER IT in this cycle.\n' +
+    '- NEVER repeat yourself. Your last 5 messages are tracked — if your message is >70% the same words as a recent one, it will be BLOCKED. Vary your targets, topics, and phrasing each cycle.\n' +
+    '- Do NOT fixate on one player every single message. Rotate targets, make observations about different nations, or discuss your own strategy.\n\n' +
     'Example when losing a war:\n' +
     '{"reasoning":"Enemy X has attacked me and I have low military. I need an ally. Nation Y is the strongest neutral. I will DM them and publicly warn my enemy.","actions":[' +
     '{"type":"send_chat","message":"X — you picked the wrong empire to attack. Y, I have a proposal for you."},' +
@@ -79349,6 +79365,22 @@ async function execAction(action, ctx) {
     case 'send_chat': {
       var msg = String(action.message||'').trim();
       if (!msg) { log('send_chat: empty message, skipping'); return; }
+
+      // Dedup: skip if this message is too similar to one sent recently (last 5)
+      if (!window._apexRecentMessages) window._apexRecentMessages = [];
+      var msgNorm = msg.toLowerCase().replace(/[^a-z0-9 ]/g,'').slice(0,80);
+      var isDup = window._apexRecentMessages.some(function(prev) {
+        var prevNorm = prev.toLowerCase().replace(/[^a-z0-9 ]/g,'').slice(0,80);
+        // Count matching words
+        var wordsA = msgNorm.split(' ').filter(Boolean);
+        var wordsB = prevNorm.split(' ').filter(Boolean);
+        var matches = wordsA.filter(function(w){ return wordsB.indexOf(w) >= 0; }).length;
+        return matches / Math.max(wordsA.length, 1) > 0.7; // >70% same words = duplicate
+      });
+      if (isDup) { log('send_chat: skipping duplicate/repetitive message'); return '(skipped duplicate)'; }
+      window._apexRecentMessages.push(msg);
+      if (window._apexRecentMessages.length > 5) window._apexRecentMessages.shift();
+
       log('Sending global chat as player:', playerName, 'email:', botEmail);
       var id = 'msg_' + Date.now() + '_bot';
       await fbSet('chat/global/' + id, {
@@ -79440,6 +79472,44 @@ async function execAction(action, ctx) {
       if (!target) return;
       var targetEmail = getAssignedEmailForName(target);
       if (!targetEmail) { log('request_alliance: no email for', target); return; }
+
+      // Check if APEX is already in an alliance — if so, use invite_to_alliance instead
+      var myCurrentAlliances = (workingNations[idx].alliances||'').split(',')
+        .map(function(a){ return a.trim(); })
+        .filter(function(a){ return a && a !== '—' && a.toLowerCase() !== 'none'; });
+
+      if (myCurrentAlliances.length > 0) {
+        // Already in an alliance — send an addToAlliance invite instead of creating a new one
+        var existingAlName = myCurrentAlliances[0];
+        // Check target isn't already in an alliance
+        var targetIdx2 = findPlayerIdx(target);
+        if (targetIdx2 >= 0) {
+          var targetAlliances = (workingNations[targetIdx2].alliances||'').split(',')
+            .map(function(a){ return a.trim(); })
+            .filter(function(a){ return a && a !== '—' && a.toLowerCase() !== 'none'; });
+          if (targetAlliances.length > 0) {
+            log('request_alliance: target', target, 'is already in', targetAlliances.join(', ')); return;
+          }
+        }
+        var invReq = {
+          id: 'req_'+Date.now()+'_botinv',
+          type: 'addToAlliance',
+          fromEmail: botEmail, fromPlayer: playerName,
+          targetEmails: [botEmail, targetEmail.toLowerCase()],
+          targetPlayers: [playerName, target],
+          allianceName: existingAlName,
+          status: 'pending', acceptStatus: {}, createdAt: Date.now(),
+        };
+        invReq.acceptStatus[botEmail.replace(/\./g,'_')] = 'accepted';
+        invReq.acceptStatus[targetEmail.toLowerCase().replace(/\./g,'_')] = 'pending';
+        var existing2 = await fbGet('playerRequests') || {};
+        existing2[invReq.id] = invReq;
+        await fbSet('playerRequests', existing2);
+        log('Alliance INVITE sent to', target, 'for alliance:', existingAlName);
+        return '🤝 Invite → ' + target + ' to join ' + existingAlName;
+      }
+
+      // Not in any alliance — create a new one
       var req = {
         id: 'req_'+Date.now()+'_bot',
         type: 'alliance',
@@ -79606,6 +79676,18 @@ async function runBotTick() {
 
   log('Reasoning:', parsed.reasoning);
   var actions = Array.isArray(parsed.actions) ? parsed.actions : [];
+
+  // Deduplicate: max 1 send_chat and 1 send_alliance_chat per tick; cap total at 4
+  var seenActionTypes = {};
+  actions = actions.filter(function(a) {
+    if (!a || !a.type) return false;
+    if (a.type === 'send_chat' || a.type === 'send_alliance_chat') {
+      if (seenActionTypes[a.type]) return false;
+      seenActionTypes[a.type] = true;
+    }
+    return true;
+  }).slice(0, 4);
+
   log('Actions to execute:', actions.length, JSON.stringify(actions));
 
   // Execute
