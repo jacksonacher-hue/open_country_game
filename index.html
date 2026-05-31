@@ -79178,12 +79178,26 @@ function parseResponse(text) {
 // ── Build prompt ──────────────────────────────────────────────────────────────
 function buildPrompt(ctx) {
   var apexMsg = window._apexTriggerMsg;
-  var apexSection = apexMsg
-    ? '\n=== DIRECT MESSAGE TO YOU — YOU MUST RESPOND TO THIS ===\n' +
-      (apexMsg.channel !== 'global' ? '[via DM from ' : '[via global chat from ') +
-      apexMsg.from + ']: "' + apexMsg.text + '"\n' +
-      '===\n'
-    : '';
+  var apexSection = '';
+  if (apexMsg) {
+    var originChannel = apexMsg.channel || 'global';
+    var originLabel = 'global chat';
+    var replyInstruction = 'Reply in your send_chat (global).';
+    if (originChannel.startsWith('alliance_')) {
+      // Work out alliance name from channel id: alliance_orbital_strike_cannon -> "orbital strike cannon"
+      var allianceFromChannel = originChannel.replace(/^alliance_/, '').replace(/_/g, ' ');
+      originLabel = 'alliance GC "' + allianceFromChannel + '"';
+      replyInstruction = 'They messaged you from the alliance GC. Reply with BOTH a send_chat (global) AND a send_alliance_chat (alliance:"' + allianceFromChannel + '") so they see your response in the right channel.';
+    } else if (originChannel !== 'global') {
+      originLabel = 'DM';
+      replyInstruction = 'Reply with send_dm targeting "' + apexMsg.from + '" AND a send_chat (global).';
+    }
+    apexSection = '\n=== DIRECT MESSAGE TO YOU — YOU MUST RESPOND TO THIS ===\n' +
+      apexMsg.from + ' said [via ' + originLabel + ']: "' + (apexMsg.text || '(no text — they just summoned you)') + '"\n' +
+      replyInstruction + '\n' +
+      'Address them by name (' + apexMsg.from + ') in your reply.\n' +
+      '===\n';
+  }
 
   var gameRules =
     'GAME RULES (use these to reason about every decision):\n' +
