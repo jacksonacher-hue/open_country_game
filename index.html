@@ -78976,7 +78976,7 @@ async function callHF(prompt) {
     body: JSON.stringify({
       model: BOT.model,
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 1048576,
+      max_tokens: Math.min(32768, 1048576 - Math.ceil(prompt.length / 4) - 500),
       temperature: 0.7,
     }),
   });
@@ -78992,7 +78992,7 @@ async function callHF(prompt) {
       resp = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'HTTP-Referer': window.location.origin, 'X-Title': 'Open Country Game Bot' },
-        body: JSON.stringify({ model: 'poolside/laguna-xs.2-20260421:free', messages: [{ role: 'user', content: prompt }], max_tokens: 1048576, temperature: 0.7 }),
+        body: JSON.stringify({ model: 'poolside/laguna-xs.2-20260421:free', messages: [{ role: 'user', content: prompt }], max_tokens: Math.min(32768, 1048576 - Math.ceil(prompt.length / 4) - 500), temperature: 0.7 }),
       });
       raw = await resp.text();
       log('Retry response status:', resp.status);
@@ -79024,7 +79024,7 @@ async function callHF(prompt) {
       body: JSON.stringify({
         model: BOT.model,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 1048576,
+        max_tokens: Math.min(32768, 1048576 - Math.ceil(prompt.length / 4) - 500),
         temperature: 0.7,
       }),
     });
@@ -79310,6 +79310,7 @@ function buildPrompt(ctx) {
     '- give_resource: {"type":"give_resource","target":"Exact Nation Name","resource":"eco","amount":5}\n' +
     '- give_province: {"type":"give_province","province":"#number","target":"Exact Nation Name"}\n' +
     '- leave_alliance: {"type":"leave_alliance","alliance_name":"..."}\n' +
+    '- send_alliance_chat: {"type":"send_alliance_chat","alliance":"Alliance Name","message":"..."} — message in your alliance GC\n' +
     '- no_action: {"type":"no_action"}\n\n' +
     'OUTPUT RULES:\n' +
     '- Output ONLY a raw JSON object. No markdown, no explanation. Start with { end with }.\n' +
@@ -79377,6 +79378,26 @@ async function execAction(action, ctx) {
       });
       log('DM sent to', target, ':', msg);
       return '📨 DM → ' + target + ': ' + msg.slice(0,40);
+    }
+
+    case 'send_alliance_chat': {
+      var msg = String(action.message||'').trim();
+      var allianceName = String(action.alliance||'').trim();
+      if (!msg) { log('send_alliance_chat: empty message'); return; }
+      // If no alliance specified, use first alliance APEX is in
+      if (!allianceName) {
+        var myAlliances = (workingNations[idx].alliances||'').split(',').map(function(a){ return a.trim(); }).filter(function(a){ return a && a !== '—' && a.toLowerCase() !== 'none'; });
+        allianceName = myAlliances[0] || '';
+      }
+      if (!allianceName) { log('send_alliance_chat: not in any alliance'); return; }
+      var channelId = allianceGcChannelId(allianceName);
+      var id = 'msg_' + Date.now() + '_botalliancegc';
+      await fbSet('chat/' + channelId + '/' + id, {
+        id: id, channel: channelId, player: playerName, email: botEmail,
+        text: msg, ts: Date.now(),
+      });
+      log('Alliance GC sent to [' + allianceName + ']:', msg);
+      return '🤝 [' + allianceName + '] ' + msg.slice(0,60);
     }
 
     case 'declare_war': {
