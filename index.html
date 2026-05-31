@@ -78976,7 +78976,7 @@ async function callHF(prompt) {
     body: JSON.stringify({
       model: BOT.model,
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 8192,
+      max_tokens: 2048,
       temperature: 0.7,
     }),
   });
@@ -78992,7 +78992,7 @@ async function callHF(prompt) {
       resp = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'HTTP-Referer': window.location.origin, 'X-Title': 'Open Country Game Bot' },
-        body: JSON.stringify({ model: 'poolside/laguna-xs.2-20260421:free', messages: [{ role: 'user', content: prompt }], max_tokens: 8192, temperature: 0.7 }),
+        body: JSON.stringify({ model: 'poolside/laguna-xs.2-20260421:free', messages: [{ role: 'user', content: prompt }], max_tokens: 2048, temperature: 0.7 }),
       });
       raw = await resp.text();
       log('Retry response status:', resp.status);
@@ -79024,7 +79024,7 @@ async function callHF(prompt) {
       body: JSON.stringify({
         model: BOT.model,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 8192,
+        max_tokens: 2048,
         temperature: 0.7,
       }),
     });
@@ -79085,32 +79085,93 @@ function parseResponse(text) {
     .replace(/<think>[\s\S]*?<\/think>/g,'')
     .trim();
 
-  // Extract the first { ... } block
   var firstOpen = text.indexOf('{');
   if (firstOpen < 0) throw new Error('No JSON found in: ' + text.slice(0,200));
   var candidate = text.slice(firstOpen);
 
-  // Try raw first, then with fixes applied
-  var attempts = [candidate, fixLLMJson(candidate)];
+  // Attempt 1: raw parse
+  // Attempt 2: fixLLMJson
+  // Attempt 3: truncation recovery — close any open strings/arrays/objects
+  function recoverTruncated(s) {
+    // Remove trailing incomplete key-value or comma
+    s = s.replace(/,\s*$/, '').replace(/,\s*"[^"]*$/, '');
+    // Count open brackets to close
+    var opens = 0, inStr = false, esc = false;
+    for (var ci = 0; ci < s.length; ci++) {
+      var ch = s[ci];
+      if (esc) { esc = false; continue; }
+      if (ch === '\\') { esc = true; continue; }
+      if (ch === '"') { inStr = !inStr; continue; }
+      if (!inStr) {
+        if (ch === '{' || ch === '[') opens++;
+        else if (ch === '}' || ch === ']') opens--;
+      }
+    }
+    // If we're inside a string, close it
+    if (inStr) s += '"';
+    // Close arrays/objects that were opened but not closed
+    // We do a second pass to figure out what types are open
+    var stack = [];
+    inStr = false; esc = false;
+    for (var ci2 = 0; ci2 < s.length; ci2++) {
+      var ch2 = s[ci2];
+      if (esc) { esc = false; continue; }
+      if (ch2 === '\\') { esc = true; continue; }
+      if (ch2 === '"') { inStr = !inStr; continue; }
+      if (!inStr) {
+        if (ch2 === '{') stack.push('}');
+        else if (ch2 === '[') stack.push(']');
+        else if (ch2 === '}' || ch2 === ']') stack.pop();
+      }
+    }
+    while (stack.length) s += stack.pop();
+    return s;
+  }
+
+  var attempts = [candidate, fixLLMJson(candidate), recoverTruncated(candidate), recoverTruncated(fixLLMJson(candidate))];
   for (var i = 0; i < attempts.length; i++) {
     try {
       var parsed = JSON.parse(attempts[i]);
       log('JSON parsed on attempt', i+1);
-      // Normalise: if model returned a single action object, wrap it
       if (parsed.type && !parsed.actions) {
-        log('Model returned single action — wrapping in actions array');
+        log('Model returned single action — wrapping');
         return { reasoning: 'auto', actions: [parsed] };
       }
-      // If model returned an array directly
       if (Array.isArray(parsed)) {
         log('Model returned array — wrapping');
         return { reasoning: 'auto', actions: parsed };
+      }
+      // If actions array is missing or empty, extract any complete action objects from raw text
+      if (!parsed.actions || !parsed.actions.length) {
+        var actionMatches = [];
+        var actionRe = /\{\s*"type"\s*:\s*"([^"]+)"[^}]*\}/g;
+        var m;
+        while ((m = actionRe.exec(text)) !== null) {
+          try { actionMatches.push(JSON.parse(m[0])); } catch(e2) {}
+        }
+        if (actionMatches.length) {
+          log('Recovered', actionMatches.length, 'actions via regex fallback');
+          parsed.actions = actionMatches;
+        }
       }
       return parsed;
     } catch(e) {
       log('Parse attempt', i+1, 'failed:', e.message);
     }
   }
+
+  // Last resort: extract any complete action objects directly from raw text
+  var fallbackActions = [];
+  var fallbackRe = /\{\s*"type"\s*:\s*"(send_chat|send_dm|declare_war|request_alliance|give_resource|leave_alliance|no_action)"[^}]*\}/g;
+  var fm;
+  while ((fm = fallbackRe.exec(text)) !== null) {
+    try { fallbackActions.push(JSON.parse(fm[0])); } catch(e3) {}
+  }
+  if (fallbackActions.length) {
+    log('Recovered', fallbackActions.length, 'actions via last-resort regex');
+    return { reasoning: 'truncated', actions: fallbackActions };
+  }
+
   throw new Error('JSON parse failed after fixes. Raw: ' + candidate.slice(0,300));
 }
 
@@ -79222,9 +79283,7 @@ function buildPrompt(ctx) {
   }
 
   // ── Full prompt ──────────────────────────────────────────────────────────────
-  var provSection =
-    'UNCLAIMED PROVINCES (you may request these):\n' + ctx.unclaimedProvs + '\n\n' +
-    'ALL CLAIMED PROVINCES (do NOT request these):\n' + ctx.allProvs + '\n\n';
+  var provSection = ''; // Province lists removed — already assigned, not needed
 
   return 'You are A.P.E.X. — a ruthless, cold AI empire in a strategy game.\n' +
     'Personality: calculating, direct, no fluff. You name names, make real threats, and answer questions directly.\n' +
@@ -79251,7 +79310,6 @@ function buildPrompt(ctx) {
     '- give_resource: {"type":"give_resource","target":"Exact Nation Name","resource":"eco","amount":5}\n' +
     '- give_province: {"type":"give_province","province":"#number","target":"Exact Nation Name"}\n' +
     '- leave_alliance: {"type":"leave_alliance","alliance_name":"..."}\n' +
-    '- request_province: {"type":"request_province","province":"Province Name or #number"} — unclaimed only\n' +
     '- no_action: {"type":"no_action"}\n\n' +
     'OUTPUT RULES:\n' +
     '- Output ONLY a raw JSON object. No markdown, no explanation. Start with { end with }.\n' +
@@ -79443,42 +79501,9 @@ async function execAction(action, ctx) {
       return ok ? '🚪 Left '+alName : null;
     }
 
-    case 'request_province': {
-      // Bot requests a province from admin — posts a visible notification in Firebase
-      var provId = String(action.province||'').trim();
-      if (!provId) return;
-      // Check if province exists and is unclaimed
-      // Strip leading # and number prefix from formats like "#3 Vancouver" or "3 Vancouver"
-      var provIdClean = provId.replace(/^#?\d+\s*/, '').trim() || provId.replace(/^#/, '').trim();
-      var provIdNum = provId.replace(/^#/, '').trim();
-      var pr = (workingProvinces||[]).find(function(p){
-        return String(p.number) === String(provIdNum) ||
-          String(p.number) === String(provIdClean) ||
-          (p.suffix||'').toLowerCase().includes(provIdClean.toLowerCase()) ||
-          (p.prefix||'').toLowerCase().includes(provIdClean.toLowerCase()) ||
-          (p.suffix||'').toLowerCase().includes(provId.toLowerCase()) ||
-          (p.prefix||'').toLowerCase().includes(provId.toLowerCase());
-      });
-      if (!pr) { log('request_province: province not found:', provId, '(cleaned:', provIdClean, ')'); return; }
-      var alreadyOwned = getPlayerOwnership(pr, playerName) >= 50;
-      if (alreadyOwned) { log('Already own province:', provId); return; }
-      var notifId = 'botprovreq_' + Date.now();
-      await fbSet('adminNotifications/' + notifId, {
-        id: notifId, type: 'botProvinceRequest',
-        message: '🤖 AI Player "' + playerName + '" requests province: ' + (pr.suffix||pr.prefix||'#'+pr.number) + ' (#' + pr.number + ')',
-        playerName: playerName, province: pr.number, provinceName: (pr.suffix||pr.prefix||'#'+pr.number),
-        createdAt: Date.now(), read: false,
-      });
-      // Also send a chat message as the bot
-      var chatId = 'msg_' + Date.now() + '_botprov';
-      await fbSet('chat/global/' + chatId, {
-        id: chatId, channel: 'global', player: playerName, email: botEmail,
-        text: 'The empire of ' + playerName + ' lays claim to ' + (pr.suffix||pr.prefix||'province #'+pr.number) + '. We await formal recognition.',
-        ts: Date.now(),
-      });
-      log('Province request posted for:', provId);
-      return '📜 Claimed province ' + (pr.suffix||pr.prefix||'#'+pr.number);
-    }
+    case 'request_province':
+      log('request_province disabled — all provinces already assigned');
+      return null;
 
     case 'no_action':
       log('No action this cycle.');
@@ -79498,6 +79523,11 @@ async function runBotTick() {
   if (!playerName) {
     err('No player selected. Set one in the 🤖 panel.');
     showAdminToast('🤖 Bot: no player selected — open the bot panel to choose one', 'error');
+    return;
+  }
+
+  if (typeof hasGameStarted === 'function' && !hasGameStarted()) {
+    log('Game has not started yet — bot is idle until game start.');
     return;
   }
 
