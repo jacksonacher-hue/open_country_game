@@ -2320,8 +2320,8 @@ const PROV_COLS = [
   { key:"owner2", label:"Owner 2", col:14, group:"own", detailOnly:true },
   { key:"owner3", label:"Owner 3", col:15, group:"own", detailOnly:true },
   { key:"owner4", label:"Owner 4", col:16, group:"own", detailOnly:true },
-  { key:"econ_income", label:"Econ", col:19, group:"inc", isBar:true, barColor:"#1D9E75" },
-  { key:"mil_income", label:"Mil", col:20, group:"inc", isBar:true, barColor:"#D85A30" },
+  { key:"econ_income", label:"Econ", col:19, group:"inc", isBar:true, barColor:"#1D9E75", taxRate:0.9 },
+  { key:"mil_income", label:"Mil", col:20, group:"inc", isBar:true, barColor:"#D85A30", taxRate:0.9 },
   { key:"def_income", label:"Def", col:21, group:"inc", isBar:true, barColor:"#378ADD" },
 ];
 
@@ -2732,8 +2732,8 @@ function updateWorkingNationProvinceStats() {
   workingNations.forEach(function(n) {
     var playerName = (n.first_name + ' ' + n.surname).trim();
     var owned = workingProvinces.filter(function(pr) { return getPlayerOwnership(pr, playerName) >= 50; });
-    var econIncome = owned.reduce(function(sum, pr) { return sum + (parseFloat(pr.econ_income) || 0); }, 0);
-    var milIncome = owned.reduce(function(sum, pr) { return sum + (parseFloat(pr.mil_income) || 0); }, 0);
+    var econIncome = owned.reduce(function(sum, pr) { return sum + (parseFloat(pr.econ_income) || 0); }, 0) * 0.9;
+    var milIncome  = owned.reduce(function(sum, pr) { return sum + (parseFloat(pr.mil_income)  || 0); }, 0) * 0.9;
     n.provinces = String(owned.length);
     n.econIncome = String(econIncome.toFixed(1));
     n.milIncome = String(milIncome.toFixed(1));
@@ -5393,9 +5393,9 @@ function calculateNationWeeklyIncomes() {
         }
       });
     }
-    n.econIncome = String(econInc.toFixed(1));
-    n.milIncome = String(milInc.toFixed(1));
-    n.mobilisedIncome = String(Math.round((milInc + econInc / 2) * 100) / 100);
+    n.econIncome = String((econInc * 0.9).toFixed(1));
+    n.milIncome = String((milInc * 0.9).toFixed(1));
+    n.mobilisedIncome = String(Math.round((milInc * 0.9 + econInc * 0.9 / 2) * 100) / 100);
   });
 }
 
@@ -5492,7 +5492,8 @@ function renderRichTable(tableId, cols, groups, data) {
   // Compute max values for bar columns
   const maxVals = {};
   cols.filter(c => c.isBar).forEach(c => {
-    maxVals[c.key] = Math.max(...data.map(d => parseFloat(d[c.key]) || 0), 1);
+    const raw = Math.max(...data.map(d => parseFloat(d[c.key]) || 0), 1);
+    maxVals[c.key] = c.taxRate ? raw * c.taxRate : raw;
   });
 
   // Group header row
@@ -5531,7 +5532,8 @@ function renderRichTable(tableId, cols, groups, data) {
       const isGrp = isFirstInGroup(cols, ci);
 
       if (c.isBar) {
-        body += renderBarCell(row[c.key], c.barColor, maxVals[c.key], isGrp);
+        const taxedVal = c.taxRate ? (parseFloat(row[c.key]) || 0) * c.taxRate : row[c.key];
+        body += renderBarCell(taxedVal, c.barColor, maxVals[c.key], isGrp);
         return;
       }
       if (c.isProgress) {
@@ -5655,15 +5657,15 @@ function buildAllianceData() {
       }
     });
 
-    var mobilisedIncome = Math.round((milInc + econInc/2) * 100)/100;
+    var mobilisedIncome = Math.round((milInc * 0.9 + econInc * 0.9 / 2) * 100)/100;
     rows.push({
       name: aName,
       members: String(n),
       totalEcon: String(tE.toFixed(1)),
       totalMil: String(tM.toFixed(1)),
       totalDef: String(tD.toFixed(1)),
-      econIncome: String(econInc.toFixed(1)),
-      milIncome: String(milInc.toFixed(1)),
+      econIncome: String((econInc * 0.9).toFixed(1)),
+      milIncome: String((milInc * 0.9).toFixed(1)),
       mobilisedIncome: String(mobilisedIncome.toFixed(1)),
       mobilised: String(Math.round((tM + tE/2) * 100)/100),
       avgFood: String((avgF/100).toFixed(2)),
@@ -5997,13 +5999,15 @@ function renderAllianceDashboard() {
         playerMilInc += parseFloat(pr.mil_income)||0;
       }
     });
-    m.econIncome = String(playerEconInc.toFixed(1));
-    m.milIncome = String(playerMilInc.toFixed(1));
-    m.mobilisedIncome = String(Math.round((playerMilInc + playerEconInc/2) * 100)/100);
+    m.econIncome = String((playerEconInc * 0.9).toFixed(1));
+    m.milIncome = String((playerMilInc * 0.9).toFixed(1));
+    m.mobilisedIncome = String(Math.round((playerMilInc * 0.9 + playerEconInc * 0.9 / 2) * 100)/100);
   });
   var allProvs = provincesData.filter(function(pr){ return memberNames.some(function(name){return getPlayerOwnership(pr,name)>=50;}); });
   var totalEconInc=0, totalMilInc=0, totalDefReset=0;
   allProvs.forEach(function(pr){ totalEconInc+=parseFloat(pr.econ_income)||0; totalMilInc+=parseFloat(pr.mil_income)||0; totalDefReset+=parseFloat(pr.def_income)||0; });
+  totalEconInc = totalEconInc * 0.9;
+  totalMilInc  = totalMilInc  * 0.9;
 
   // Fog of war: check if this alliance is fully stale (no members are visible)
   var fogVisibleNations = getFogVisibleNations();
@@ -6336,10 +6340,12 @@ function renderPlayerDashboard() {
       truceEl.style.display = 'none';
   }
   // --- INCOME & EXPORTS ---
-  var econIncome = owned.reduce(function(s,pr){return s+(parseFloat(pr.econ_income)||0);},0);
-  var milIncome = owned.reduce(function(s,pr){return s+(parseFloat(pr.mil_income)||0);},0);
+  var econIncomeRaw = owned.reduce(function(s,pr){return s+(parseFloat(pr.econ_income)||0);},0);
+  var milIncomeRaw  = owned.reduce(function(s,pr){return s+(parseFloat(pr.mil_income)||0);},0);
   var defReset = owned.reduce(function(s,pr){return s+(parseFloat(pr.def_income)||0);},0);
 
+  var econIncome = econIncomeRaw * 0.9;
+  var milIncome  = milIncomeRaw  * 0.9;
   var mobilisedIncome = Math.round((milIncome + econIncome/2) * 100)/100;
   var incHtml = '';
   incHtml += '<div class="income-card green"><div class="label">Econ / week</div><div class="value" style="color:#1D9E75;">+' + econIncome.toFixed(1) + '</div></div>';
@@ -6436,8 +6442,8 @@ function renderCompactProvTable(provs) {
     html += '<td style="text-align:center;">' + esc(pr.number) + '</td>';
     html += '<td style="font-weight:500;">' + esc(pr.suffix || pr.prefix || '—') + '</td>';
     html += '<td style="font-size:12px;">' + esc(getOwnerString(pr)) + '</td>';
-    html += '<td style="text-align:right;">' + esc(pr.econ_income || '0') + '</td>';
-    html += '<td style="text-align:right;">' + esc(pr.mil_income || '0') + '</td>';
+    html += '<td style="text-align:right;">' + ((parseFloat(pr.econ_income) || 0) * 0.9).toFixed(1) + '</td>';
+    html += '<td style="text-align:right;">' + ((parseFloat(pr.mil_income)  || 0) * 0.9).toFixed(1) + '</td>';
     html += '<td style="text-align:right;">' + esc(pr.def_income || '0') + '</td>';
     html += '</tr>';
   });
@@ -8902,8 +8908,8 @@ function runWeeklyUpdate() {
     // 3. Province income — before adding, apply low pop-stat penalties
     var playerName = (p.first_name + ' ' + p.surname).trim();
     var owned = workingProvinces.filter(function(pr) { return getPlayerOwnership(pr, playerName) >= 50; });
-    var econGrowth = owned.reduce(function(s, pr) { return s + (parseFloat(pr.econ_income) || 0); }, 0);
-    var milGrowth = owned.reduce(function(s, pr) { return s + (parseFloat(pr.mil_income) || 0); }, 0);
+    var econGrowth = owned.reduce(function(s, pr) { return s + (parseFloat(pr.econ_income) || 0); }, 0) * 0.9;
+    var milGrowth  = owned.reduce(function(s, pr) { return s + (parseFloat(pr.mil_income)  || 0); }, 0) * 0.9;
     var defReset = owned.reduce(function(s, pr) { return s + (parseFloat(pr.def_income) || 0); }, 0);
 
     // Low pop-stat penalties (checked against CURRENT pop stats, post-decay)
@@ -73532,7 +73538,7 @@ function setupMapTooltip() {
             }
           }
           if (prov) {
-            html += '<div style="opacity:0.6;font-size:11px;">Econ +' + (prov.econ_income || 0) + ' · Mil +' + (prov.mil_income || 0) + ' · Def +' + (prov.def_income || 0) + '</div>';
+            html += '<div style="opacity:0.6;font-size:11px;">Econ +' + ((parseFloat(prov.econ_income)||0)*0.9).toFixed(1) + ' · Mil +' + ((parseFloat(prov.mil_income)||0)*0.9).toFixed(1) + ' · Def +' + (prov.def_income || 0) + '</div>';
             if (prov.original_export && prov.original_export !== '—') html += '<div style="opacity:0.6;font-size:11px;">Export: ' + esc(prov.original_export) + '</div>';
           }
         }
@@ -74499,8 +74505,8 @@ async function checkAndRunAutomaticUpdates() {
 
           var playerNameW = (p.first_name + ' ' + p.surname).trim();
           var owned = workingProvinces.filter(function(pr) { return getPlayerOwnership(pr, playerNameW) >= 50; });
-          var econGrowth = owned.reduce(function(s, pr) { return s + (parseFloat(pr.econ_income) || 0); }, 0);
-          var milGrowth  = owned.reduce(function(s, pr) { return s + (parseFloat(pr.mil_income)  || 0); }, 0);
+          var econGrowth = owned.reduce(function(s, pr) { return s + (parseFloat(pr.econ_income) || 0); }, 0) * 0.9;
+          var milGrowth  = owned.reduce(function(s, pr) { return s + (parseFloat(pr.mil_income)  || 0); }, 0) * 0.9;
           var defReset   = owned.reduce(function(s, pr) { return s + (parseFloat(pr.def_income)  || 0); }, 0);
 
           var penaltyNotes = [];
@@ -78848,7 +78854,7 @@ var BOT = {
   playerName: '',
 
   // Gemini model to use
-  model: 'gemini-2.0-flash',
+  model: 'gemini-2.5-flash',
 
   // How often the bot acts (ms) — default 3 hours
   intervalMs: 3 * 60 * 60 * 1000,
@@ -79042,8 +79048,8 @@ async function buildContext(playerName) {
   (workingProvinces || []).forEach(function(pr) {
     var name = pr.suffix || pr.prefix || ('#' + pr.number);
     var owners = [pr.owner1, pr.owner2, pr.owner3, pr.owner4].filter(Boolean).join(', ');
-    var eco = pr.econ_income || 0;
-    var mil = pr.mil_income || 0;
+    var eco = ((parseFloat(pr.econ_income) || 0) * 0.9).toFixed(1);
+    var mil = ((parseFloat(pr.mil_income)  || 0) * 0.9).toFixed(1);
     if (!owners || owners.trim() === '' || owners === '—') {
       unclaimedProvs.push('#' + pr.number + ' ' + name + ' (eco+' + eco + ' mil+' + mil + ')');
     } else {
@@ -79097,11 +79103,13 @@ async function callHF(prompt) {
   var raw = await resp.text();
   log('API raw response:', raw.slice(0, 500));
 
-  // Auto-retry on 429 rate limit
-  if (resp.status === 429) {
-    log('Rate limited. Retrying in 15 seconds...');
-    showAdminToast('🤖 Rate limited — retrying in 15s...', 'error');
-    await sleep(15000);
+  // Auto-retry on 429 rate limit with exponential backoff
+  var retryDelays = [30, 60, 120];
+  for (var attempt = 0; attempt < retryDelays.length && resp.status === 429; attempt++) {
+    var wait = retryDelays[attempt];
+    log('Rate limited. Retrying in ' + wait + 's (attempt ' + (attempt + 1) + ')...');
+    showAdminToast('🤖 Rate limited — retrying in ' + wait + 's...', 'error');
+    await sleep(wait * 1000);
     resp = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -79111,7 +79119,7 @@ async function callHF(prompt) {
       }),
     });
     raw = await resp.text();
-    log('Retry status:', resp.status, 'response:', raw.slice(0, 300));
+    log('Retry ' + (attempt + 1) + ' status:', resp.status, 'response:', raw.slice(0, 300));
   }
 
   if (!resp.ok) throw new Error('Gemini API error ' + resp.status + ': ' + raw.slice(0, 300));
