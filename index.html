@@ -2958,7 +2958,7 @@ async function renderActionsTab() {
     var _myProvCount = workingProvinces.filter(function(pr){
       return getPlayerOwnership(pr, assigned) >= 50;
     }).length;
-    if (_myProvCount === 0 && isGameStarted()) {
+    if (_myProvCount === 0 && isGameStarted() && !isAdminUser()) {
       // Load death record from Firebase
       try {
         var _deathSnap = await window.firebaseGet(window.firebaseRef(window.firebaseDb, 'rankings'));
