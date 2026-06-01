@@ -78847,9 +78847,8 @@ var BOT = {
   // Leave blank and the panel lets you pick from a dropdown
   playerName: '',
 
-  // Models to skip if randomly selected by openrouter/free (too small/thinking-only)
-  badModels: ['liquid/lfm-2.5-1.2b-thinking-20260120:free', 'liquid/lfm-2.5-1.2b-instruct-20260120:free'],
-  model: 'openrouter/free',  // Auto-picks best available free model
+  // Gemini model to use
+  model: 'gemini-2.0-flash',
 
   // How often the bot acts (ms) — default 3 hours
   intervalMs: 3 * 60 * 60 * 1000,
@@ -78864,7 +78863,7 @@ function err()  { console.error.apply(console, ['[🤖 BOT ❌]'].concat(Array.f
 
 function getKey() {
   var k = localStorage.getItem('aibot_hf_key') || '';
-  log('API key loaded, length:', k.length, 'starts with hf_:', k.startsWith('hf_'));
+  log('API key loaded, length:', k.length, 'starts with AIza:', k.startsWith('AIza'));
   return k;
 }
 function saveKey(k) { localStorage.setItem('aibot_hf_key', k.trim()); }
@@ -79076,95 +79075,53 @@ async function buildContext(playerName) {
   return ctx;
 }
 
-// ── Call HuggingFace ──────────────────────────────────────────────────────────
+// ── Call Gemini ───────────────────────────────────────────────────────────────
 async function callHF(prompt) {
   var key = getKey();
-  if (!key || key.length < 10) throw new Error('No API key set. Enter your OpenRouter key (sk-or-...) in the 🤖 panel.');
+  if (!key || key.length < 10) throw new Error('No API key set. Enter your Gemini API key (AIza...) in the 🤖 panel.');
 
-  // OpenRouter — browser-safe CORS, free tier, same models as HuggingFace
-  var url = 'https://openrouter.ai/api/v1/chat/completions';
-  log('Calling OpenRouter model:', BOT.model);
+  var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + BOT.model + ':generateContent?key=' + key;
+  log('Calling Gemini model:', BOT.model);
   log('Prompt length:', prompt.length, 'chars');
 
   var resp = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Authorization': 'Bearer ' + key,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': window.location.origin,
-      'X-Title': 'Open Country Game Bot',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: BOT.model,
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: Math.min(32768, 1048576 - Math.ceil(prompt.length / 4) - 500),
-      temperature: 0.7,
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
     }),
   });
 
   log('API response status:', resp.status);
   var raw = await resp.text();
-  // Check if we got a blacklisted model — retry once with a specific good model
-  try {
-    var respData = JSON.parse(raw.trim());
-    var usedModel = respData.model || '';
-    if (BOT.badModels && BOT.badModels.some(function(m){ return usedModel.includes(m.split(':')[0]); })) {
-      log('Got blacklisted model:', usedModel, '— retrying with poolside/laguna-xs.2-20260421:free');
-      resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'HTTP-Referer': window.location.origin, 'X-Title': 'Open Country Game Bot' },
-        body: JSON.stringify({ model: 'poolside/laguna-xs.2-20260421:free', messages: [{ role: 'user', content: prompt }], max_tokens: Math.min(32768, 1048576 - Math.ceil(prompt.length / 4) - 500), temperature: 0.7 }),
-      });
-      raw = await resp.text();
-      log('Retry response status:', resp.status);
-    }
-  } catch(e) {}
   log('API raw response:', raw.slice(0, 500));
 
   // Auto-retry on 429 rate limit
   if (resp.status === 429) {
-    var retryAfter = 15;
-    try {
-      var errData = JSON.parse(raw);
-      retryAfter = (errData.error && errData.error.metadata && errData.error.metadata.retry_after_seconds)
-        ? Math.ceil(errData.error.metadata.retry_after_seconds) + 2
-        : 15;
-    } catch(e) {}
-    log('Rate limited. Retrying in', retryAfter, 'seconds...');
-    showAdminToast('🤖 Rate limited — retrying in ' + retryAfter + 's...', 'error');
-    await sleep(retryAfter * 1000);
-    // One retry
+    log('Rate limited. Retrying in 15 seconds...');
+    showAdminToast('🤖 Rate limited — retrying in 15s...', 'error');
+    await sleep(15000);
     resp = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + key,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': window.location.origin,
-        'X-Title': 'Open Country Game Bot',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: BOT.model,
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: Math.min(32768, 1048576 - Math.ceil(prompt.length / 4) - 500),
-        temperature: 0.7,
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
       }),
     });
     raw = await resp.text();
     log('Retry status:', resp.status, 'response:', raw.slice(0, 300));
   }
 
-  if (!resp.ok) throw new Error('API error ' + resp.status + ': ' + raw.slice(0, 300));
+  if (!resp.ok) throw new Error('Gemini API error ' + resp.status + ': ' + raw.slice(0, 300));
 
   var data = JSON.parse(raw);
-  var msg = data.choices && data.choices[0] && data.choices[0].message;
-  // Handle reasoning models (content is null, answer is in reasoning field)
-  var text = (msg && msg.content) || (msg && msg.reasoning) || '';
-  // Last resort: grab JSON directly from raw if model embedded it
-  if (!text) {
-    var m = raw.match(/\{"reasoning"[\s\S]*?\}/);
-    if (m) text = m[0];
-  }
-  if (!text) throw new Error('Empty response from API. Full response: ' + raw.slice(0,300));
+  var text = '';
+  try {
+    text = data.candidates[0].content.parts[0].text || '';
+  } catch(e) {}
+  if (!text) throw new Error('Empty response from Gemini. Full response: ' + raw.slice(0, 300));
   log('LLM output:', text.slice(0, 400));
   return text;
 }
@@ -79947,9 +79904,9 @@ function injectBotAdminPanel() {
 
     // HF Key
     '<div style="margin-bottom:10px;">' +
-      '<div style="color:#888;font-size:10px;margin-bottom:3px;text-transform:uppercase;">OpenRouter API Key</div>' +
+      '<div style="color:#888;font-size:10px;margin-bottom:3px;text-transform:uppercase;">Gemini API Key</div>' +
       '<div style="display:flex;gap:6px;">' +
-        '<input id="aiBotKey" type="password" placeholder="sk-or-..." value="' + (getKey()||'') + '" ' +
+        '<input id="aiBotKey" type="password" placeholder="AIza..." value="' + (getKey()||'') + '" ' +
           'style="flex:1;padding:6px;background:#111;border:1px solid #333;border-radius:6px;color:#fff;font-family:inherit;font-size:11px;">' +
         '<button onclick="window._botSaveKey()" style="padding:6px 10px;background:#7c3aed;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Save</button>' +
       '</div>' +
@@ -79993,7 +79950,7 @@ window._botSaveKey = function() {
   saveKey(k);
   log('Key saved, length:', k.length);
   refreshBotPanel();
-  showAdminToast('🤖 API key saved', 'success');
+  showAdminToast('🤖 Gemini API key saved', 'success');
 };
 
 window._botRunNow = async function() {
@@ -80026,7 +79983,7 @@ window._botShowLog = async function() {
 function initBot() {
   log('AI Bot module loaded (simple mode — no separate account needed)');
   log('Saved player:', getPlayerName()||'(none)');
-  log('API key set:', getKey().length > 0);
+  log('API key set (Gemini):', getKey().length > 0);
 
   window.injectBotAdminPanel = injectBotAdminPanel;
   window.runBotNow = window._botRunNow;
