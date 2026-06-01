@@ -1924,6 +1924,17 @@ window.populateWorkbookFromFirebaseData = populateWorkbookFromFirebaseData;
           Scans every player's owned provinces and adds any missing exports derived from <em>original_export</em>. Safe to run multiple times — won't duplicate existing entries.
         </div>
 
+        <div class="auto-sub-title">Create Bot Players &amp; Assign Missing Provinces</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;">
+          <input id="botPlayerProvsPerBot" type="number" value="8" min="1" max="50" style="width:70px;padding:8px;font-family:inherit;font-size:13px;border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);" title="Provinces per bot">
+          <span style="font-size:13px;color:var(--color-text-secondary);">provinces each</span>
+          <button onclick="createBotPlayersAndAssign()" style="padding:8px 16px;font-family:inherit;font-size:13px;font-weight:600;color:#fff;background:#7c3aed;border:none;border-radius:var(--border-radius-md);cursor:pointer;">🤖 Create Bots &amp; Assign Provinces</button>
+          <span id="botPlayerStatus" style="font-size:12px;color:var(--color-text-tertiary);"></span>
+        </div>
+        <div style="font-size:12px;color:var(--color-text-tertiary);margin-bottom:16px;">
+          Finds all unassigned provinces, creates Bot 1, Bot 2… as needed, and gives each bot the specified number of provinces. Skips provinces already owned. Safe to run multiple times — won't duplicate existing bots.
+        </div>
+
         <div class="auto-sub-title">Border Detection (Ray-Cast)</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;">
           <button id="adminRebuildBordersBtn" onclick="adminRebuildBorders()" style="padding:8px 16px;font-family:inherit;font-size:13px;font-weight:500;color:#fff;background:#1D4ED8;border:none;border-radius:var(--border-radius-md);cursor:pointer;">🗺 Rebuild Borders (Ray-Cast)</button>
@@ -2592,6 +2603,111 @@ function createPlayer() {
   document.getElementById('createPlayerFirstName').value = '';
   document.getElementById('createPlayerSurname').value = '';
 
+}
+
+function createBotPlayersAndAssign() {
+  var provsEach = parseInt(document.getElementById('botPlayerProvsPerBot')?.value) || 8;
+  var statusEl = document.getElementById('botPlayerStatus');
+  function setStatus(msg, col) {
+    if (statusEl) { statusEl.textContent = msg; statusEl.style.color = col || 'var(--color-text-tertiary)'; }
+  }
+
+  // Collect all truly unowned provinces (no owner1/2/3/4 set)
+  var unowned = workingProvinces.filter(function(pr) {
+    return ['owner1','owner2','owner3','owner4'].every(function(k) {
+      return !pr[k] || pr[k].trim() === '' || pr[k].trim() === '—';
+    });
+  });
+
+  if (!unowned.length) {
+    setStatus('No unassigned provinces found!', '#f87171');
+    displayAdminMessage('No unassigned provinces to distribute.', 'error');
+    return;
+  }
+
+  // Shuffle provinces for random distribution
+  for (var i = unowned.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var tmp = unowned[i]; unowned[i] = unowned[j]; unowned[j] = tmp;
+  }
+
+  // Figure out how many bots already exist
+  var existingBotNums = [];
+  workingNations.forEach(function(n) {
+    var fullName = ((n.first_name||'') + ' ' + (n.surname||'')).trim();
+    var m = fullName.match(/^Bot (\d+)$/i);
+    if (m) existingBotNums.push(parseInt(m[1]));
+  });
+  var nextBotNum = existingBotNums.length ? Math.max.apply(null, existingBotNums) + 1 : 1;
+
+  var totalAssigned = 0;
+  var botsCreated = [];
+  var provIdx = 0;
+
+  while (provIdx < unowned.length) {
+    // Create a new bot player
+    var botName = 'Bot ' + nextBotNum;
+    nextBotNum++;
+
+    // Skip if somehow already exists
+    if (workingNations.some(function(n) {
+      return normalizeName((n.first_name + ' ' + n.surname).trim()) === normalizeName(botName);
+    })) continue;
+
+    var player = {};
+    NATION_COLS.forEach(function(c) { player[c.key] = ''; });
+    player.first_name = 'Bot';
+    player.surname = String(nextBotNum - 1);
+    player.provinces = '0';
+    player.econ = '5';
+    player.military = '5';
+    player.defence = '5';
+    player.food = '100';
+    player.stability = '100';
+    player.happiness = '100';
+    player.econIncome = '0';
+    player.milIncome = '0';
+    player.mobilisedIncome = '0';
+    player.mobilised = '5';
+    player.wars = '';
+    player.alliances = '';
+    player.truced = '';
+    player.puppets_of = '';
+    player.reagent = '';
+    player.exports = '';
+    player.subsidies = '';
+    workingNations.push(player);
+
+    // Assign up to provsEach provinces to this bot
+    var assigned = [];
+    for (var p = 0; p < provsEach && provIdx < unowned.length; p++, provIdx++) {
+      var province = unowned[provIdx];
+      province.starting_player = botName;
+      province.owner1 = botName;
+      province.owner2 = province.owner3 = province.owner4 = '';
+      assigned.push(province.number);
+      totalAssigned++;
+    }
+
+    botsCreated.push(botName + ' (' + assigned.length + ' provs)');
+    addToLog('Bot created: ' + botName + ' with provinces: ' + assigned.join(', '));
+  }
+
+  if (!botsCreated.length) {
+    setStatus('No bots needed — all provinces assigned!', '#4ade80');
+    return;
+  }
+
+  syncTradeNodes();
+  updateWorkingNationProvinceStats();
+  renderWorkingTable();
+  refreshAutoDropdowns();
+  syncWorkingDataToSheets();
+
+  var msg = 'Created ' + botsCreated.length + ' bots, assigned ' + totalAssigned + ' provinces.';
+  setStatus(msg, '#4ade80');
+  displayAdminMessage(msg + ' Bots: ' + botsCreated.join(', '), 'success');
+  addToLog(msg);
 }
 
 function inferExportStatFromName(name) {
