@@ -79859,7 +79859,7 @@ function refreshBotPanel() {
   fbGet(BOT.fbKey).then(function(state) {
     var playerName = getPlayerName();
     var key = getKey();
-    var keyOk = (key.startsWith('hf_') || key.startsWith('sk-or-') || key.startsWith('sk-')) && key.length > 10;
+    var keyOk = key.length > 10 && (key.startsWith('AIza') || key.startsWith('hf_') || key.startsWith('sk-or-') || key.startsWith('sk-'));
     var lastRun = state && state.lastRun;
     var elapsed = lastRun ? Math.floor((Date.now()-lastRun)/60000) : null;
     var nextIn  = lastRun ? Math.max(0, Math.round((BOT.intervalMs-(Date.now()-lastRun))/60000)) : 0;
