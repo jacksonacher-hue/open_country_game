@@ -78853,8 +78853,11 @@ var BOT = {
   // Leave blank and the panel lets you pick from a dropdown
   playerName: '',
 
-  // Gemini model to use
-  model: 'gemini-2.5-flash',
+  // OpenAI-compatible model to use
+  model: 'gpt-4o-mini',
+
+  // OpenAI-compatible API base URL (change to use other providers)
+  apiBase: 'https://api.openai.com/v1',
 
   // How often the bot acts (ms) — default 3 hours
   intervalMs: 3 * 60 * 60 * 1000,
@@ -78869,7 +78872,7 @@ function err()  { console.error.apply(console, ['[🤖 BOT ❌]'].concat(Array.f
 
 function getKey() {
   var k = localStorage.getItem('aibot_hf_key') || '';
-  log('API key loaded, length:', k.length, 'starts with AIza:', k.startsWith('AIza'));
+  log('API key loaded, length:', k.length, 'starts with sk-:', k.startsWith('sk-'));
   return k;
 }
 function saveKey(k) { localStorage.setItem('aibot_hf_key', k.trim()); }
@@ -79081,23 +79084,28 @@ async function buildContext(playerName) {
   return ctx;
 }
 
-// ── Call Gemini ───────────────────────────────────────────────────────────────
+// ── Call OpenAI-compatible API ────────────────────────────────────────────────
 async function callHF(prompt) {
   var key = getKey();
-  if (!key || key.length < 10) throw new Error('No API key set. Enter your Gemini API key (AIza...) in the 🤖 panel.');
+  if (!key || key.length < 10) throw new Error('No API key set. Enter your OpenAI API key (sk-...) in the 🤖 panel.');
 
-  var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + BOT.model + ':generateContent?key=' + key;
-  log('Calling Gemini model:', BOT.model);
+  var url = BOT.apiBase.replace(/\/$/, '') + '/chat/completions';
+  log('Calling model:', BOT.model, 'at', url);
   log('Prompt length:', prompt.length, 'chars');
 
-  var resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
-    }),
+  var body = JSON.stringify({
+    model: BOT.model,
+    messages: [{ role: 'user', content: prompt }],
+    max_tokens: 8192,
+    temperature: 0.7,
   });
+
+  var headers = {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer ' + key,
+  };
+
+  var resp = await fetch(url, { method: 'POST', headers: headers, body: body });
 
   log('API response status:', resp.status);
   var raw = await resp.text();
@@ -79110,26 +79118,16 @@ async function callHF(prompt) {
     log('Rate limited. Retrying in ' + wait + 's (attempt ' + (attempt + 1) + ')...');
     showAdminToast('🤖 Rate limited — retrying in ' + wait + 's...', 'error');
     await sleep(wait * 1000);
-    resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
-      }),
-    });
+    resp = await fetch(url, { method: 'POST', headers: headers, body: body });
     raw = await resp.text();
     log('Retry ' + (attempt + 1) + ' status:', resp.status, 'response:', raw.slice(0, 300));
   }
 
-  if (!resp.ok) throw new Error('Gemini API error ' + resp.status + ': ' + raw.slice(0, 300));
+  if (!resp.ok) throw new Error('API error ' + resp.status + ': ' + raw.slice(0, 300));
 
   var data = JSON.parse(raw);
-  var text = '';
-  try {
-    text = data.candidates[0].content.parts[0].text || '';
-  } catch(e) {}
-  if (!text) throw new Error('Empty response from Gemini. Full response: ' + raw.slice(0, 300));
+  var text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+  if (!text) throw new Error('Empty response from API. Full response: ' + raw.slice(0, 300));
   log('LLM output:', text.slice(0, 400));
   return text;
 }
@@ -79859,7 +79857,7 @@ function refreshBotPanel() {
   fbGet(BOT.fbKey).then(function(state) {
     var playerName = getPlayerName();
     var key = getKey();
-    var keyOk = key.length > 10 && (key.startsWith('AIza') || key.startsWith('hf_') || key.startsWith('sk-or-') || key.startsWith('sk-'));
+    var keyOk = key.length > 10 && key.startsWith('sk-');
     var lastRun = state && state.lastRun;
     var elapsed = lastRun ? Math.floor((Date.now()-lastRun)/60000) : null;
     var nextIn  = lastRun ? Math.max(0, Math.round((BOT.intervalMs-(Date.now()-lastRun))/60000)) : 0;
@@ -79912,9 +79910,9 @@ function injectBotAdminPanel() {
 
     // HF Key
     '<div style="margin-bottom:10px;">' +
-      '<div style="color:#888;font-size:10px;margin-bottom:3px;text-transform:uppercase;">Gemini API Key</div>' +
+      '<div style="color:#888;font-size:10px;margin-bottom:3px;text-transform:uppercase;">OpenAI API Key</div>' +
       '<div style="display:flex;gap:6px;">' +
-        '<input id="aiBotKey" type="password" placeholder="AIza..." value="' + (getKey()||'') + '" ' +
+        '<input id="aiBotKey" type="password" placeholder="sk-..." value="' + (getKey()||'') + '" ' +
           'style="flex:1;padding:6px;background:#111;border:1px solid #333;border-radius:6px;color:#fff;font-family:inherit;font-size:11px;">' +
         '<button onclick="window._botSaveKey()" style="padding:6px 10px;background:#7c3aed;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;">Save</button>' +
       '</div>' +
@@ -79958,7 +79956,7 @@ window._botSaveKey = function() {
   saveKey(k);
   log('Key saved, length:', k.length);
   refreshBotPanel();
-  showAdminToast('🤖 Gemini API key saved', 'success');
+  showAdminToast('🤖 OpenAI API key saved', 'success');
 };
 
 window._botRunNow = async function() {
@@ -79991,7 +79989,7 @@ window._botShowLog = async function() {
 function initBot() {
   log('AI Bot module loaded (simple mode — no separate account needed)');
   log('Saved player:', getPlayerName()||'(none)');
-  log('API key set (Gemini):', getKey().length > 0);
+  log('API key set (OpenAI):', getKey().length > 0);
 
   window.injectBotAdminPanel = injectBotAdminPanel;
   window.runBotNow = window._botRunNow;
