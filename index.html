@@ -2683,7 +2683,7 @@ function createBotPlayersAndAssign() {
     for (var p = 0; p < provsEach && provIdx < unowned.length; p++, provIdx++) {
       var province = unowned[provIdx];
       province.starting_player = botName;
-      province.owner1 = botName;
+      province.owner1 = botName + ' 100%';   // explicit % prevents parseOwnership misreading the bot number as a percentage
       province.owner2 = province.owner3 = province.owner4 = '';
       assigned.push(province.number);
       totalAssigned++;
@@ -73741,7 +73741,12 @@ function parseOwnership(ownerStr) {
   return ownerStr.split(',').map(function(entry) {
     entry = String(entry || '').trim().replace(/\s+/g, ' ');
     if (!entry) return null;
-    var match = entry.match(/^(.+?)\s+([\d.]+)\s*%?\s*$/);
+    var match = entry.match(/^(.+?)\s+([\d.]+)\s*%\s*$/);  // MUST have explicit % sign
+    if (!match) {
+      // Also accept bare number >= 2 digits or >= 10 (so "50" = 50% but "1" or "2" is not)
+      var matchBare = entry.match(/^(.+?)\s+(\d{2,}|[1-9]\d+)\s*$/);
+      if (matchBare) match = matchBare;
+    }
     if (match) {
       return { name: match[1].trim().toLowerCase(), percent: parseFloat(match[2]) || 0 };
     }
