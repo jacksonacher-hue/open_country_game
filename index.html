@@ -673,17 +673,48 @@ window.populateWorkbookFromFirebaseData = populateWorkbookFromFirebaseData;
     box-shadow: 0 1px 0 var(--color-border-secondary), 0 4px 20px rgba(0,0,0,0.4);
   }
   .topbar-brand {
-    font-weight: 700;
+    font-weight: 800;
     font-size: 15px;
-    color: var(--color-accent);
+    color: var(--color-text-primary);
     display: flex;
     align-items: center;
     gap: 10px;
+    letter-spacing: 0.3px;
+    font-family: 'IBM Plex Mono', monospace;
+    text-decoration: none;
+  }
+  .topbar-brand-icon {
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(135deg, var(--color-accent), #8b5cf6);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(99,102,241,0.35);
+  }
+  .topbar-brand-icon svg { width: 18px; height: 18px; color: #fff; }
+  .topbar-brand-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    line-height: 1;
+  }
+  .topbar-brand-title {
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--color-text-primary);
     letter-spacing: 0.5px;
     text-transform: uppercase;
-    font-family: 'IBM Plex Mono', monospace;
   }
-  .topbar-brand svg { width: 20px; height: 20px; color: var(--color-accent); }
+  .topbar-brand-sub {
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--color-text-tertiary);
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+  }
   .topbar-status {
     font-size: 12px;
     color: var(--color-text-tertiary);
@@ -1318,8 +1349,16 @@ window.populateWorkbookFromFirebaseData = populateWorkbookFromFirebaseData;
 
 <div class="topbar">
   <div class="topbar-brand">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-    Nation Command Centre
+    <div class="topbar-brand-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+        <polyline points="9 22 9 12 15 12 15 22"/>
+      </svg>
+    </div>
+    <div class="topbar-brand-text">
+      <div class="topbar-brand-title">Nation Command</div>
+      <div class="topbar-brand-sub">Command Centre</div>
+    </div>
   </div>
   <div class="topbar-status" id="statusBar">No data loaded</div>
   <div id="lockoutDebugHud" style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.5px;padding:3px 10px;border-radius:20px;border:1px solid var(--color-border-primary);background:var(--color-background-secondary);color:var(--color-text-tertiary);white-space:nowrap;cursor:default;" title="Lockout debug">⏱ …</div>
@@ -1347,6 +1386,7 @@ window.populateWorkbookFromFirebaseData = populateWorkbookFromFirebaseData;
   <button class="tab-btn" id="marketplaceTabBtn" data-tab="marketplace">Marketplace</button>
   <button class="tab-btn" data-tab="rules">Rules</button>
   <button class="tab-btn" id="rankingsTabBtn" data-tab="rankings">🏆 Rankings</button>
+  <button class="tab-btn" id="compareTabBtn" data-tab="compare">⚖ Compare</button>
   <button class="tab-btn" id="chatTabBtn" data-tab="chat" style="position:relative;">Chat<span id="chatUnreadBadge" style="display:none;position:absolute;top:3px;right:3px;min-width:16px;height:16px;line-height:16px;padding:0 4px;border-radius:8px;background:#ef4444;color:#fff;font-size:10px;font-weight:700;text-align:center;pointer-events:none;"></span></button>
   <button class="tab-btn" id="adminTabBtn" data-tab="autoupdate" style="display:none;">Auto Update (Admin)</button>
   <button class="tab-btn" id="espionageTabBtn" data-tab="espionage" style="display:none;">Espionage</button>
@@ -5136,6 +5176,9 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (tabName === 'rankings') {
       if (typeof renderRankingsTab === 'function') renderRankingsTab();
     }
+    if (tabName === 'compare') {
+      if (typeof initCompareTab === 'function') initCompareTab();
+    }
     if (tabName === 'history') {
       if (!isAdminUser()) {
 
@@ -8214,8 +8257,195 @@ async function renderRankingsTab() {
 }
 window.renderRankingsTab = renderRankingsTab;
 
+// ═══════════════════════════════════════
+// COMPARE TAB
+// ═══════════════════════════════════════
+var cmpMode = 'players';
+var cmpSelected = [];
 
-async function pruneDeadNations() {
+var CMP_PLAYER_STATS = [
+  { key: 'econ',            label: 'Econ',           fmt: 'num', higher: true  },
+  { key: 'military',        label: 'Military',        fmt: 'num', higher: true  },
+  { key: 'defence',         label: 'Defence',         fmt: 'num', higher: true  },
+  { key: 'mobilised',       label: 'Mobilised',       fmt: 'num', higher: true  },
+  { key: 'econIncome',      label: 'Econ / wk',       fmt: 'num', higher: true  },
+  { key: 'milIncome',       label: 'Mil / wk',        fmt: 'num', higher: true  },
+  { key: 'provinces',       label: 'Provinces',       fmt: 'num', higher: true  },
+  { key: 'food',            label: 'Food',            fmt: 'pct', higher: true  },
+  { key: 'stability',       label: 'Stability',       fmt: 'pct', higher: true  },
+  { key: 'happiness',       label: 'Happiness',       fmt: 'pct', higher: true  },
+  { key: 'alliances',       label: 'Alliances',       fmt: 'txt', higher: false },
+  { key: 'wars',            label: 'Wars',            fmt: 'txt', higher: false },
+];
+
+var CMP_ALLIANCE_STATS = [
+  { key: 'members',         label: 'Members',         fmt: 'num', higher: true  },
+  { key: 'totalEcon',       label: 'Total Econ',      fmt: 'num', higher: true  },
+  { key: 'totalMil',        label: 'Total Military',  fmt: 'num', higher: true  },
+  { key: 'totalDef',        label: 'Total Defence',   fmt: 'num', higher: true  },
+  { key: 'mobilised',       label: 'Mobilised',       fmt: 'num', higher: true  },
+  { key: 'econIncome',      label: 'Econ / wk',       fmt: 'num', higher: true  },
+  { key: 'milIncome',       label: 'Mil / wk',        fmt: 'num', higher: true  },
+  { key: 'provCount',       label: 'Provinces',       fmt: 'num', higher: true  },
+  { key: 'avgFood',         label: 'Avg Food',        fmt: 'pct', higher: true  },
+  { key: 'avgStab',         label: 'Avg Stability',   fmt: 'pct', higher: true  },
+  { key: 'avgHapp',         label: 'Avg Happiness',   fmt: 'pct', higher: true  },
+  { key: 'wars',            label: 'Wars',             fmt: 'txt', higher: false },
+];
+
+function setCmpMode(mode) {
+  cmpMode = mode;
+  cmpSelected = [];
+  document.getElementById('cmpModePlayers').style.background    = mode === 'players'   ? 'var(--color-accent)' : 'var(--color-background-secondary)';
+  document.getElementById('cmpModePlayers').style.color         = mode === 'players'   ? '#fff' : 'var(--color-text-secondary)';
+  document.getElementById('cmpModePlayers').style.borderColor   = mode === 'players'   ? 'var(--color-accent)' : 'var(--color-border-primary)';
+  document.getElementById('cmpModeAlliances').style.background  = mode === 'alliances' ? 'var(--color-accent)' : 'var(--color-background-secondary)';
+  document.getElementById('cmpModeAlliances').style.color       = mode === 'alliances' ? '#fff' : 'var(--color-text-secondary)';
+  document.getElementById('cmpModeAlliances').style.borderColor = mode === 'alliances' ? 'var(--color-accent)' : 'var(--color-border-primary)';
+  populateCmpSelect();
+  renderCmp();
+}
+
+function populateCmpSelect() {
+  var sel = document.getElementById('cmpAddSelect');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— Add to comparison —</option>';
+  if (cmpMode === 'players') {
+    (nationsData || []).forEach(function(n) {
+      var name = ((n.first_name || '') + ' ' + (n.surname || '')).trim();
+      if (name && !cmpSelected.includes(name)) {
+        var opt = document.createElement('option'); opt.value = name; opt.textContent = name; sel.appendChild(opt);
+      }
+    });
+  } else {
+    var alliances = buildAllianceData();
+    alliances.forEach(function(a) {
+      if (a.name && !cmpSelected.includes(a.name)) {
+        var opt = document.createElement('option'); opt.value = a.name; opt.textContent = a.name + ' (' + a.members + ' members)'; sel.appendChild(opt);
+      }
+    });
+  }
+}
+
+function cmpAdd() {
+  var sel = document.getElementById('cmpAddSelect');
+  if (!sel || !sel.value) return;
+  if (!cmpSelected.includes(sel.value)) cmpSelected.push(sel.value);
+  populateCmpSelect();
+  renderCmp();
+}
+
+function cmpRemove(name) {
+  cmpSelected = cmpSelected.filter(function(x){ return x !== name; });
+  populateCmpSelect();
+  renderCmp();
+}
+
+function cmpClear() {
+  cmpSelected = [];
+  populateCmpSelect();
+  renderCmp();
+}
+
+function renderCmp() {
+  var chipsEl  = document.getElementById('cmpChips');
+  var outputEl = document.getElementById('cmpOutput');
+  var countEl  = document.getElementById('cmpCount');
+  if (!chipsEl || !outputEl) return;
+
+  // Chips
+  chipsEl.innerHTML = cmpSelected.map(function(name) {
+    return '<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 12px;background:var(--color-background-secondary);border:1px solid var(--color-border-primary);border-radius:20px;font-size:12px;font-weight:600;color:var(--color-text-primary);">' +
+      esc(name) +
+      '<button onclick="cmpRemove(' + JSON.stringify(name) + ')" style="background:none;border:none;cursor:pointer;color:var(--color-text-tertiary);font-size:14px;line-height:1;padding:0;">×</button>' +
+    '</span>';
+  }).join('');
+  if (countEl) countEl.textContent = cmpSelected.length + ' selected';
+
+  if (cmpSelected.length === 0) { outputEl.innerHTML = '<div style="color:var(--color-text-tertiary);padding:32px 0;text-align:center;font-size:14px;">Add players or alliances above to compare them.</div>'; return; }
+
+  var stats   = cmpMode === 'players' ? CMP_PLAYER_STATS : CMP_ALLIANCE_STATS;
+  var dataset = cmpMode === 'players' ? (nationsData || []) : buildAllianceData();
+  var nameKey = cmpMode === 'players' ? function(n){ return ((n.first_name||'')+' '+(n.surname||'')).trim(); } : function(a){ return a.name; };
+
+  // Get data rows for selected
+  var rows = cmpSelected.map(function(sel) {
+    return dataset.find(function(n){ return nameKey(n) === sel; }) || null;
+  });
+
+  // Accent palette for columns
+  var palette = ['#6366f1','#f59e0b','#10b981','#f43f5e','#06b6d4','#8b5cf6','#ec4899'];
+
+  // Build header
+  var hdr = '<thead><tr><th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--color-text-tertiary);border-bottom:1px solid var(--color-border-primary);background:var(--color-background-secondary);position:sticky;left:0;z-index:2;">Stat</th>';
+  cmpSelected.forEach(function(name, i) {
+    var color = palette[i % palette.length];
+    hdr += '<th style="padding:10px 16px;text-align:right;font-size:13px;font-weight:700;color:' + color + ';border-bottom:1px solid var(--color-border-primary);background:var(--color-background-secondary);white-space:nowrap;min-width:130px;">' + esc(name) + '</th>';
+  });
+  hdr += '</tr></thead>';
+
+  // Build body
+  var body = '<tbody>';
+  stats.forEach(function(stat, si) {
+    // Parse values
+    var vals = rows.map(function(r) {
+      if (!r) return null;
+      var v = r[stat.key];
+      if (stat.fmt === 'pct') { var p = parsePercent(v); return isNaN(p) ? null : p; }
+      if (stat.fmt === 'num') { var n = parseFloat(v); return isNaN(n) ? null : n; }
+      return v || '—';
+    });
+
+    var numericVals = vals.filter(function(v){ return typeof v === 'number'; });
+    var maxVal = numericVals.length ? Math.max.apply(null, numericVals) : null;
+    var minVal = numericVals.length ? Math.min.apply(null, numericVals) : null;
+
+    var rowBg = si % 2 === 0 ? 'var(--color-background-primary)' : 'rgba(255,255,255,0.02)';
+    body += '<tr style="background:' + rowBg + ';">';
+    body += '<td style="padding:9px 16px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;color:var(--color-text-tertiary);border-bottom:1px solid var(--color-border-secondary);position:sticky;left:0;background:' + rowBg + ';z-index:1;white-space:nowrap;">' + esc(stat.label) + '</td>';
+
+    vals.forEach(function(val, ci) {
+      var color = palette[ci % palette.length];
+      var displayVal, barHtml = '';
+
+      if (val === null) {
+        displayVal = '<span style="color:var(--color-text-tertiary);">—</span>';
+      } else if (stat.fmt === 'txt') {
+        displayVal = '<span style="font-size:11px;color:var(--color-text-secondary);">' + esc(String(val)) + '</span>';
+      } else {
+        // Determine if best/worst
+        var isBest  = stat.higher ? val === maxVal : val === minVal;
+        var isWorst = stat.higher ? val === minVal : val === maxVal;
+        var numFmt  = stat.fmt === 'pct' ? (val/100).toLocaleString(undefined,{style:'percent',maximumFractionDigits:0}) : val.toFixed(val % 1 === 0 ? 0 : 1);
+        var badge   = isBest && numericVals.length > 1 ? ' <span style="font-size:10px;color:#4ade80;">▲</span>' : (isWorst && numericVals.length > 1 ? ' <span style="font-size:10px;color:#f87171;">▼</span>' : '');
+        displayVal  = '<span style="font-size:14px;font-weight:700;color:' + (isBest && numericVals.length>1 ? '#4ade80' : isWorst && numericVals.length>1 ? '#f87171' : color) + ';">' + numFmt + badge + '</span>';
+
+        // Mini bar showing proportion
+        if (maxVal && maxVal > 0 && stat.fmt !== 'txt') {
+          var pct = Math.round((val / maxVal) * 100);
+          barHtml = '<div style="margin-top:5px;height:3px;border-radius:2px;background:var(--color-background-tertiary);overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + color + ';border-radius:2px;opacity:0.7;"></div></div>';
+        }
+      }
+
+      body += '<td style="padding:9px 16px;text-align:right;border-bottom:1px solid var(--color-border-secondary);">' + displayVal + barHtml + '</td>';
+    });
+    body += '</tr>';
+  });
+  body += '</tbody>';
+
+  outputEl.innerHTML = '<table style="width:100%;border-collapse:collapse;border:1px solid var(--color-border-primary);border-radius:var(--border-radius-lg);overflow:hidden;">' + hdr + body + '</table>';
+}
+
+function initCompareTab() {
+  setCmpMode('players');
+}
+window.setCmpMode   = setCmpMode;
+window.cmpAdd       = cmpAdd;
+window.cmpRemove    = cmpRemove;
+window.cmpClear     = cmpClear;
+window.initCompareTab = initCompareTab;
+
+
   // Identify nations with no provinces (≥50% ownership)
   var dead = workingNations.filter(function(n) {
     var playerName = ((n.first_name || '') + ' ' + (n.surname || '')).trim();
@@ -76418,6 +76648,38 @@ window.ecoConvertQuick = ecoConvertQuick;
     <div id="rankingsContent">
       <div style="color:var(--color-text-tertiary);text-align:center;padding:40px;font-size:14px;">Loading rankings…</div>
     </div>
+  </div>
+</div>
+
+<!-- ═══════════ COMPARE TAB ═══════════ -->
+<div class="tab-content" id="tab-compare">
+  <div style="max-width:1100px;margin:0 auto;padding:32px 24px 60px;">
+    <div style="margin-bottom:24px;">
+      <div style="font-size:22px;font-weight:800;color:var(--color-text-primary);letter-spacing:-0.3px;">⚖ Compare</div>
+      <div style="font-size:13px;color:var(--color-text-tertiary);margin-top:4px;">Side-by-side stats for players and alliances.</div>
+    </div>
+
+    <!-- Mode toggle -->
+    <div style="display:flex;gap:8px;margin-bottom:20px;">
+      <button id="cmpModePlayers" onclick="setCmpMode('players')" style="padding:7px 18px;font-family:inherit;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;border-radius:var(--border-radius-md);border:1px solid var(--color-accent);background:var(--color-accent);color:#fff;cursor:pointer;">Players</button>
+      <button id="cmpModeAlliances" onclick="setCmpMode('alliances')" style="padding:7px 18px;font-family:inherit;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;border-radius:var(--border-radius-md);border:1px solid var(--color-border-primary);background:var(--color-background-secondary);color:var(--color-text-secondary);cursor:pointer;">Alliances</button>
+    </div>
+
+    <!-- Picker row -->
+    <div id="cmpPickerRow" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px;align-items:center;">
+      <select id="cmpAddSelect" style="padding:7px 12px;font-family:inherit;font-size:13px;border:1px solid var(--color-border-primary);border-radius:var(--border-radius-md);background:var(--color-background-secondary);color:var(--color-text-primary);min-width:200px;">
+        <option value="">— Add to comparison —</option>
+      </select>
+      <button onclick="cmpAdd()" style="padding:7px 16px;font-family:inherit;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;border-radius:var(--border-radius-md);border:1px solid var(--color-border-primary);background:var(--color-background-secondary);color:var(--color-text-secondary);cursor:pointer;">＋ Add</button>
+      <button onclick="cmpClear()" style="padding:7px 16px;font-family:inherit;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;border-radius:var(--border-radius-md);border:1px solid var(--color-border-primary);background:transparent;color:var(--color-text-tertiary);cursor:pointer;">✕ Clear</button>
+      <span id="cmpCount" style="font-size:12px;color:var(--color-text-tertiary);font-family:'IBM Plex Mono',monospace;">0 selected</span>
+    </div>
+
+    <!-- Tag chips of selected -->
+    <div id="cmpChips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;"></div>
+
+    <!-- Comparison output -->
+    <div id="cmpOutput" style="overflow-x:auto;"></div>
   </div>
 </div>
 
