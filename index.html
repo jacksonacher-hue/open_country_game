@@ -75073,6 +75073,8 @@ async function performExchangeProvinceAction() {
     var pr = workingProvinces.find(function(p) { return parseInt(p.number) === provNum; });
     if (!pr) { overlordAlert('Province not found.'); return false; }
     if (getPlayerOwnership(pr, myName) < 50) { overlordAlert('You do not own majority of that province.'); return false; }
+    var myProvinceCount = workingProvinces.filter(function(p) { return getPlayerOwnership(p, myName) >= 50; }).length;
+    if (myProvinceCount <= 8) { overlordAlert('You cannot give away provinces — you would fall below 8 provinces.'); return false; }
     // Clear all ownership entries for my player
     ['owner1','owner2','owner3','owner4'].forEach(function(col) {
       if (pr[col] && normalizeName(pr[col]).includes(normalizeName(myName))) {
@@ -79657,6 +79659,8 @@ async function execAction(action, ctx) {
       });
       if (!pr) { log('give_province: not found:', provId); return; }
       if (getPlayerOwnership(pr, playerName) < 50) { log('give_province: dont own:', provId); return; }
+      var botProvinceCount = workingProvinces.filter(function(p) { return getPlayerOwnership(p, playerName) >= 50; }).length;
+      if (botProvinceCount <= 8) { log('give_province: would drop below 8 provinces, aborting'); return; }
       var ok = await performActionWithRefresh('AI: Cede '+provId+' to '+target, function() {
         ['owner1','owner2','owner3','owner4'].forEach(function(c){
           if ((pr[c]||'').toLowerCase().includes(playerName.toLowerCase())) pr[c]='';
